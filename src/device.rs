@@ -9,6 +9,7 @@
 ///   switches the family, so selects are read back and retried.
 
 use hidapi::HidApi;
+use std::cell::RefCell;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -26,6 +27,22 @@ const QUERY_ATTEMPTS: usize = 3;
 pub struct Device {
     handle: hidapi::HidDevice,
     pub product: String,
+    /// Unsolicited event frames seen while reading replies.
+    events: RefCell<Vec<Event>>,
+}
+
+/// An unsolicited frame from the headset (link, battery, mic mute, DND...).
+#[derive(Clone, Debug)]
+pub struct Event {
+    pub cmd: u8,
+    pub data: Vec<u8>,
+}
+
+impl Event {
+    /// Link state carried by a "WIRELESS_CONNECTION_STATUS" event.
+    pub fn link(&self) -> Option<bool> {
+        (self.cmd == proto::CMD_WIRELESS).then(|| self.data.first() == Some(&1))
+    }
 }
 
 /// Snapshot of the headset's read-only state.
@@ -59,7 +76,11 @@ impl Device {
                         .product_string()
                         .unwrap_or("Razer BlackShark V2 Pro")
                         .to_string();
-                    return Ok(Device { handle, product });
+                    return Ok(Device {
+                        handle,
+                        product,
+                        events: RefCell::new(Vec::new()),
+                    });
                 }
             }
 
@@ -84,14 +105,42 @@ impl Device {
         self.send(&proto::set_remote_mode(on))
     }
 
-    /// Drop queued input reports so a stale reply can't answer a new query.
+    /// Keep the event frames of an input report.
+    fn collect_events(&self, report: &[u8]) {
+        let mut events = self.events.borrow_mut();
+        for f in proto::frames(report) {
+            if f.flag == proto::FLAG_EVENT {
+                events.push(Event { cmd: f.cmd, data: f.data.to_vec() });
+            }
+        }
+    }
+
+    /// Drop queued replies so a stale one can't answer a new query
+    /// (events are kept).
     fn drain(&self) {
         let mut buf = [0u8; 64];
         while let Ok(n) = self.handle.read_timeout(&mut buf, 0) {
             if n == 0 {
                 break;
             }
+            self.collect_events(&buf[..n]);
         }
+    }
+
+    /// Events received so far, waiting up to `wait_ms` for new ones.
+    /// Err means the dongle is gone.
+    pub fn take_events(&self, wait_ms: i32) -> Result<Vec<Event>, String> {
+        let mut buf = [0u8; 64];
+        let mut timeout = wait_ms;
+        loop {
+            match self.handle.read_timeout(&mut buf, timeout) {
+                Ok(0) => break,
+                Ok(n) => self.collect_events(&buf[..n]),
+                Err(e) => return Err(format!("Read failed: {e}")),
+            }
+            timeout = 0; // after the first report, only take what's queued
+        }
+        Ok(std::mem::take(&mut *self.events.borrow_mut()))
     }
 
     /// Read input reports until `pick` accepts one, up to REPLY_TIMEOUT.
@@ -105,6 +154,7 @@ impl Device {
             }
             match self.handle.read_timeout(&mut buf, left.as_millis() as i32) {
                 Ok(n) if n > 0 => {
+                    self.collect_events(&buf[..n]);
                     if let Some(v) = pick(&buf[..n]) {
                         return Some(v);
                     }
@@ -144,6 +194,11 @@ impl Device {
 
     fn query_u8(&self, cmd_id: u8) -> Result<Option<u8>, String> {
         Ok(self.query(cmd_id)?.and_then(|v| v.first().copied()))
+    }
+
+    /// Whether the headset is linked. Err means the dongle is gone.
+    pub fn link_status(&self) -> Result<bool, String> {
+        Ok(self.query_u8(proto::CMD_WIRELESS)? == Some(1))
     }
 
     /// Check if headset is wirelessly connected to the dongle.

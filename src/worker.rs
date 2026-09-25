@@ -6,12 +6,15 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use crate::config::{Config, Profile};
+use crate::connlog::ConnLog;
 use crate::device::{Device, Status};
 use crate::protocol::EqPreset;
 use crate::winaudio::{self, AudioDevice, Endpoint, Flow};
 
 const POLL_CONNECTED: Duration = Duration::from_secs(5);
 const POLL_DISCONNECTED: Duration = Duration::from_secs(3);
+/// How often to look for unsolicited link events between polls.
+const EVENT_TICK: Duration = Duration::from_millis(250);
 /// Ignore the headset's reported preset this long after our own writes:
 /// a cross-family select can briefly land on the wrong preset.
 const PRESET_SETTLE: Duration = Duration::from_secs(4);
@@ -88,6 +91,7 @@ pub fn spawn_device_worker(
             demo,
             last_write: Instant::now() - PRESET_SETTLE,
             misses: 0,
+            log: ConnLog::new("panel"),
         };
         w.run(cmd_rx);
     });
@@ -105,6 +109,7 @@ struct DevWorker {
     /// Consecutive polls without the headset; one dropped reply isn't a
     /// disconnect (and would otherwise re-apply the profile on the next poll).
     misses: u32,
+    log: ConnLog,
 }
 
 impl DevWorker {
@@ -112,7 +117,7 @@ impl DevWorker {
         winaudio::com_init();
         let mut next_poll = Instant::now();
         loop {
-            let wait = next_poll.saturating_duration_since(Instant::now());
+            let wait = next_poll.saturating_duration_since(Instant::now()).min(EVENT_TICK);
             match rx.recv_timeout(wait) {
                 Ok(first) => {
                     let mut batch = vec![first];
@@ -120,6 +125,11 @@ impl DevWorker {
                     self.handle(batch);
                     // Re-read state soon after a write.
                     next_poll = next_poll.min(Instant::now() + Duration::from_millis(1500));
+                }
+                Err(RecvTimeoutError::Timeout) if Instant::now() < next_poll => {
+                    if self.check_events() {
+                        next_poll = Instant::now();
+                    }
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     self.poll();
@@ -133,6 +143,42 @@ impl DevWorker {
                 Err(RecvTimeoutError::Disconnected) => break,
             }
         }
+    }
+
+    /// Log a link change, unless the background watcher is running (it
+    /// keeps the log then, and two writers would duplicate every line).
+    fn log_link(&mut self, connected: bool, how: &str) {
+        if !self.demo && !crate::instance::watcher_running() {
+            self.log.update(connected, how);
+        }
+    }
+
+    /// Handle link events the headset sent on its own. These catch drops
+    /// too short for the periodic poll. Returns true if a poll is due now
+    /// (the headset came back and needs its profile).
+    fn check_events(&mut self) -> bool {
+        let Some(dev) = &self.dev else { return false };
+        let events = match dev.take_events(0) {
+            Ok(e) => e,
+            Err(_) => {
+                self.dev = None;
+                return true;
+            }
+        };
+        let mut poll_now = false;
+        for link in events.iter().filter_map(|e| e.link()) {
+            self.log_link(link, "aviso del headset");
+            if link {
+                poll_now = true;
+            } else if self.info.status.headset_connected {
+                // Trust the headset's own report: no debounce.
+                self.misses = 2;
+                let mut info = self.info.clone();
+                info.status = Status::default();
+                self.set_info(info);
+            }
+        }
+        poll_now
     }
 
     fn emit(&self, ev: DevEvent) {
@@ -243,6 +289,7 @@ impl DevWorker {
     fn poll(&mut self) {
         let was_connected = self.info.status.headset_connected;
         let Some(status) = self.read_status() else {
+            self.log_link(false, "dongle no encontrado");
             self.set_info(DeviceInfo::default());
             return;
         };
@@ -264,6 +311,7 @@ impl DevWorker {
         };
         info.status = status;
         let connected = info.status.headset_connected;
+        self.log_link(connected, "comprobación periódica");
 
         // The dongle answers this even with the headset off.
         if info.dongle_firmware.is_none() {

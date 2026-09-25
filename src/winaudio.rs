@@ -215,8 +215,8 @@ public class AudioSwitcher {{
         launch("control.exe", &["mmsys.cpl"]);
     }
 
-    /// Open a folder in Explorer.
-    pub fn open_folder(path: &std::path::Path) {
+    /// Open a file or folder with its default app.
+    pub fn open_path(path: &std::path::Path) {
         let _ = Command::new("explorer.exe").arg(path).spawn();
     }
 }
@@ -244,7 +244,7 @@ mod imp {
     }
     pub fn open_volume_mixer() {}
     pub fn open_sound_settings() {}
-    pub fn open_folder(path: &std::path::Path) {
+    pub fn open_path(path: &std::path::Path) {
         let _ = std::process::Command::new("xdg-open").arg(path).spawn();
     }
 }

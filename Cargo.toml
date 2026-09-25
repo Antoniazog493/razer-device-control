@@ -10,6 +10,7 @@ eframe = { version = "0.36", default-features = false, features = ["default_font
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
+chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [target.'cfg(windows)'.dependencies]
 hidapi = "2.6"

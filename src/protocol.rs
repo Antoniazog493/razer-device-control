@@ -156,7 +156,7 @@ pub struct Frame<'a> {
 }
 
 pub const FLAG_ACK: u8 = 0x01;
-#[allow(dead_code)] // unsolicited events (battery, mic mute, DND...), not used yet
+/// Unsolicited event (link, battery, mic mute, DND...).
 pub const FLAG_EVENT: u8 = 0x02;
 
 /// Split an input report into its "PI" frames.

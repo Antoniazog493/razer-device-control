@@ -11,7 +11,7 @@ use std::time::{Duration, Instant};
 use crate::config::{Config, EqMode, Profile};
 use crate::protocol::{self, EqPreset};
 use crate::worker::{self, AudioCmd, AudioState, Change, DevCmd, DevEvent, DeviceInfo, Target};
-use crate::{registry, synapse, winaudio};
+use crate::{connlog, registry, synapse, winaudio};
 use theme::*;
 use widgets::*;
 
@@ -89,6 +89,10 @@ struct RzrApp {
     eq_pending: bool,
     autostart: bool,
     dialog: Option<Dialog>,
+    /// Connection log shown in the Power tab, re-read every few seconds.
+    conn_log: Vec<String>,
+    conn_drops_today: usize,
+    conn_log_read: Option<Instant>,
 }
 
 impl RzrApp {
@@ -111,6 +115,9 @@ impl RzrApp {
             eq_pending: false,
             autostart: registry::autostart_enabled(),
             dialog: None,
+            conn_log: Vec::new(),
+            conn_drops_today: 0,
+            conn_log_read: None,
         }
     }
 
@@ -765,6 +772,52 @@ impl RzrApp {
                 }
             });
         });
+        ui.add_space(12.0);
+        self.connection_log_card(ui);
+    }
+
+    fn connection_log_card(&mut self, ui: &mut egui::Ui) {
+        if self.conn_log_read.is_none_or(|t| t.elapsed() > Duration::from_secs(3)) {
+            self.conn_log = connlog::recent(12);
+            self.conn_drops_today = connlog::drops_today();
+            self.conn_log_read = Some(Instant::now());
+        }
+        ui.ctx().request_repaint_after(Duration::from_secs(3));
+
+        card(ui, |ui| {
+            card_title(
+                ui,
+                "REGISTRO DE CONEXIÓN",
+                None,
+                Some("Cada vez que el headset pierde o recupera el enlace con el dongle se anota la hora y cuánto duró el corte. Funciona con el panel abierto y en segundo plano (Iniciar con Windows)."),
+            );
+            let (text, color) = match self.conn_drops_today {
+                0 => ("Sin caídas hoy".to_string(), GREEN),
+                1 => ("1 caída hoy".to_string(), WARN),
+                n => (format!("{n} caídas hoy"), WARN),
+            };
+            ui.label(RichText::new(text).size(15.0).color(color));
+            ui.add_space(4.0);
+            if self.conn_log.is_empty() {
+                dim_text(ui, "Todavía no hay registros.");
+            } else {
+                for line in &self.conn_log {
+                    let color = if line.contains("DESCONECTADO") {
+                        WARN
+                    } else if line.contains("RECONECTADO") {
+                        GREEN
+                    } else {
+                        TEXT_DIM
+                    };
+                    ui.label(RichText::new(line).monospace().size(11.5).color(color));
+                }
+            }
+            ui.add_space(6.0);
+            if external_link(ui, "Abrir registro completo").clicked() {
+                winaudio::open_path(&connlog::path());
+            }
+            faint_text(ui, "Si los cortes coinciden con algo (un disco externo, el celular, el microondas...), esa es la pista.");
+        });
     }
 
     fn tab_settings(&mut self, ui: &mut egui::Ui) {
@@ -812,7 +865,7 @@ impl RzrApp {
                     if ui.button("Abrir carpeta").clicked() {
                         if let Some(dir) = Config::path().parent() {
                             let _ = std::fs::create_dir_all(dir);
-                            winaudio::open_folder(dir);
+                            winaudio::open_path(dir);
                         }
                     }
                 });

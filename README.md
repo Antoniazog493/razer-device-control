@@ -29,6 +29,7 @@ Al conectar los BlackShark V2 Pro sin Synapse, el audio suena bajo y plano: los 
 | Dispositivo de salida/entrada predeterminado al conectar | Windows | ✅ |
 | Varios perfiles, importar perfiles de Synapse (`.synapse4`) | rzr | ✅ |
 | Iniciar con Windows y aplicar el perfil al conectar/reconectar | rzr | ✅ |
+| Registro de caídas de conexión (hora y duración de cada corte) | rzr | ✅ |
 | Bass Boost, Normalización de sonido, Claridad de voz, THX Spatial Audio | Motor THX en el PC (instalado por Synapse) | ❌ ver abajo |
 | EQ de micrófono, normalización, claridad vocal, reducción de ruido, puerta de voz | Software de Synapse en el PC | ❌ ver abajo |
 
@@ -54,6 +55,7 @@ Haz **doble clic en `rzr.exe`** y se abre el panel. Cada cambio se guarda y se e
 - **Perfiles:** el menú `•••` junto a *PERFIL* permite crear, duplicar, renombrar, eliminar e importar perfiles.
 - **Importar de Synapse:** exporta tu perfil desde Synapse (archivo `.synapse4`) y usa *Importar de Synapse…* o **arrástralo a la ventana**. Se importan el ecualizador, el sidetone, el apagado automático y No molestar.
 - **Iniciar con Windows:** actívalo en *AJUSTES*. rzr quedará en segundo plano, sin ventana, y aplicará tu perfil cada vez que el headset se conecte o reconecte.
+- **Caídas de conexión:** rzr anota cada vez que el headset pierde el enlace con el dongle y cuánto tardó en volver, en `%APPDATA%\rzr\conexion.log`. Las últimas aparecen en *ENERGÍA*. Usa los avisos que el propio headset envía, así que también detecta cortes de pocos segundos.
 - **Botón EQ del headset:** si cambias de preset con el botón físico, el panel lo detecta y actualiza la selección.
 
 ### Línea de comandos

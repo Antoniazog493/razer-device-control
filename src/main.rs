@@ -3,6 +3,7 @@
 #![cfg_attr(windows, windows_subsystem = "windows")]
 
 mod config;
+mod connlog;
 mod device;
 mod gui;
 mod instance;
@@ -14,7 +15,7 @@ mod worker;
 
 use std::io::{self, Write};
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use config::Config;
 use worker::Target;
@@ -123,48 +124,103 @@ fn run_watch(silent: bool) {
     }
 
     let poll_interval = Duration::from_secs(5);
+    let mut dev: Option<device::Device> = None;
+    let mut log = connlog::ConnLog::new("segundo plano");
     let mut was_connected = false;
     let mut applied = false;
     // Consecutive failed link checks; one dropped reply isn't a disconnect.
     let mut misses = 0;
+    let mut next_check = Instant::now();
 
     if !silent {
-        println!("rzr: watching for headset (poll every 5s, Ctrl+C to stop)");
+        println!("rzr: watching for headset (Ctrl+C to stop)");
+        println!("  Connection drops are logged to {}", connlog::path().display());
     }
 
     loop {
-        let connected = match device::Device::open(1000) {
-            Ok(dev) => {
-                let c = dev.is_headset_connected();
-                if c && !applied {
-                    // Headset just connected (or first detection).
-                    // Reload so changes made in the GUI are picked up.
-                    let cfg = Config::load();
-                    if !silent {
-                        println!("  Headset connected, applying profile \"{}\"...", cfg.profile().name);
-                    }
-                    let result = dev.apply_profile(cfg.profile(), cfg.send_legacy_config);
-                    if !silent {
-                        if let Some(batt) = dev.get_battery() {
-                            println!("  Battery: {}%", batt);
-                        }
-                        match result {
-                            Ok(()) => println!("  Done!"),
-                            Err(e) => println!("  Failed: {e}"),
-                        }
-                    }
-                    worker::apply_default_devices(&Target::from_config(&cfg));
-                    applied = true;
+        // Keep the dongle open so the headset's own link events reach us:
+        // they catch drops too short for the periodic check.
+        let Some(d) = dev.as_ref() else {
+            match device::Device::open(0) {
+                Ok(d) => {
+                    dev = Some(d);
+                    next_check = Instant::now();
                 }
-                c
+                Err(_) => {
+                    if was_connected {
+                        log.update(false, "dongle no encontrado");
+                        if !silent {
+                            println!("  Dongle not found, waiting...");
+                        }
+                    }
+                    was_connected = false;
+                    applied = false;
+                    thread::sleep(poll_interval);
+                }
             }
-            Err(_) => false,
+            continue;
+        };
+
+        match d.take_events(250) {
+            Ok(events) => {
+                for link in events.iter().filter_map(|e| e.link()) {
+                    log.update(link, "aviso del headset");
+                    if link {
+                        next_check = Instant::now(); // re-apply right away
+                    } else {
+                        if !silent && was_connected {
+                            println!("  Headset disconnected, waiting for reconnect...");
+                        }
+                        was_connected = false;
+                        applied = false;
+                        misses = 0;
+                    }
+                }
+            }
+            Err(_) => {
+                dev = None;
+                continue;
+            }
+        }
+
+        if Instant::now() < next_check {
+            continue;
+        }
+        next_check = Instant::now() + poll_interval;
+
+        let connected = match d.link_status() {
+            Ok(c) => c,
+            Err(_) => {
+                dev = None;
+                continue;
+            }
         };
 
         misses = if connected { 0 } else { misses + 1 };
         if was_connected && !connected && misses < 2 {
-            thread::sleep(poll_interval);
             continue;
+        }
+        log.update(connected, "comprobación periódica");
+
+        if connected && !applied {
+            // Headset just connected (or first detection).
+            // Reload so changes made in the GUI are picked up.
+            let cfg = Config::load();
+            if !silent {
+                println!("  Headset connected, applying profile \"{}\"...", cfg.profile().name);
+            }
+            let result = d.apply_profile(cfg.profile(), cfg.send_legacy_config);
+            if !silent {
+                if let Some(batt) = d.get_battery() {
+                    println!("  Battery: {}%", batt);
+                }
+                match result {
+                    Ok(()) => println!("  Done!"),
+                    Err(e) => println!("  Failed: {e}"),
+                }
+            }
+            worker::apply_default_devices(&Target::from_config(&cfg));
+            applied = true;
         }
 
         if was_connected && !connected {
@@ -176,7 +232,6 @@ fn run_watch(silent: bool) {
         }
 
         was_connected = connected;
-        thread::sleep(poll_interval);
     }
 }
 
