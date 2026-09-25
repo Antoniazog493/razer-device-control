@@ -5,10 +5,11 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::config::{Config, Profile};
+use crate::config::{Config, EqMethod, Profile};
 use crate::connlog::ConnLog;
-use crate::device::{Device, Status};
-use crate::protocol::EqPreset;
+use crate::device::{self, Device, Options, Status};
+use crate::dlog;
+use crate::protocol::{self, EqPreset, EQ_BANDS};
 use crate::winaudio::{self, AudioDevice, Endpoint, Flow};
 
 const POLL_CONNECTED: Duration = Duration::from_secs(5);
@@ -35,7 +36,7 @@ pub struct Target {
     pub profile: Profile,
     pub default_speaker: String,
     pub default_microphone: String,
-    pub synapse_init: bool,
+    pub opts: Options,
 }
 
 impl Target {
@@ -44,7 +45,7 @@ impl Target {
             profile: cfg.profile().clone(),
             default_speaker: cfg.default_speaker.clone(),
             default_microphone: cfg.default_microphone.clone(),
-            synapse_init: cfg.send_legacy_config,
+            opts: Options::from_config(cfg),
         }
     }
 }
@@ -54,6 +55,27 @@ pub enum DevCmd {
     Update(Target, Change),
     /// Store the new target without pushing (applied on next connect).
     SetTarget(Target),
+    /// Guided EQ test (AJUSTES).
+    Diag(DiagCmd),
+}
+
+pub enum DiagCmd {
+    /// Stop polling and keep other rzr processes off the dongle.
+    Begin,
+    /// Send one test setting with the given method, then read the headset
+    /// back (answered with DevEvent::Diag).
+    Run { action: DiagAction, method: EqMethod, release: bool },
+    /// Resume normal operation with this target, re-applying the profile.
+    End(Target),
+}
+
+#[derive(Clone, Copy, Debug)]
+pub enum DiagAction {
+    /// Custom preset with this curve.
+    Curve([i8; EQ_BANDS]),
+    Preset(EqPreset),
+    /// "Speaker Preset EQ Status" (0x9E).
+    EqStatus(u8),
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -70,8 +92,11 @@ pub struct DeviceInfo {
 pub enum DevEvent {
     Info(DeviceInfo),
     Message { text: String, error: bool },
-    /// The headset's EQ button switched the preset.
-    PresetChanged(EqPreset),
+    /// The headset is playing a different preset than the profile says:
+    /// its EQ button switched it, or our write didn't take.
+    PresetChanged { preset: EqPreset, from_button: bool },
+    /// Result of a guided-test step: what the headset reports afterwards.
+    Diag(String),
 }
 
 pub fn spawn_device_worker(
@@ -90,6 +115,8 @@ pub fn spawn_device_worker(
             ctx,
             demo,
             last_write: Instant::now() - PRESET_SETTLE,
+            button_preset: false,
+            diag: false,
             misses: 0,
             log: ConnLog::new("panel"),
         };
@@ -106,6 +133,10 @@ struct DevWorker {
     ctx: eframe::egui::Context,
     demo: bool,
     last_write: Instant,
+    /// The headset's EQ button sent a preset event since our last write.
+    button_preset: bool,
+    /// Guided test running: no polling, no automatic writes.
+    diag: bool,
     /// Consecutive polls without the headset; one dropped reply isn't a
     /// disconnect (and would otherwise re-apply the profile on the next poll).
     misses: u32,
@@ -130,6 +161,10 @@ impl DevWorker {
                     if self.check_events() {
                         next_poll = Instant::now();
                     }
+                }
+                Err(RecvTimeoutError::Timeout) if self.diag => {
+                    self.check_events();
+                    next_poll = Instant::now() + POLL_CONNECTED;
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     self.poll();
@@ -166,6 +201,19 @@ impl DevWorker {
             }
         };
         let mut poll_now = false;
+        for e in &events {
+            dlog!("aviso del headset: {:02X} {:?}", e.cmd, e.data);
+            // The EQ button reports the new preset (our own writes do too,
+            // hence the settle time).
+            if e.cmd == protocol::CMD_PRESET_GET
+                && !self.diag
+                && self.last_write.elapsed() > PRESET_SETTLE
+                && e.data.first().and_then(|&s| EqPreset::from_selector(s)).is_some()
+            {
+                self.button_preset = true;
+                poll_now = true;
+            }
+        }
         for link in events.iter().filter_map(|e| e.link()) {
             self.log_link(link, "aviso del headset");
             if link {
@@ -209,36 +257,111 @@ impl DevWorker {
                     }
                 }
                 DevCmd::SetTarget(t) => self.target = t,
+                DevCmd::Diag(d) => {
+                    self.diag_cmd(d);
+                    changes.clear();
+                }
             }
+        }
+        if let Some(dev) = &self.dev {
+            dev.set_options(self.target.opts);
         }
         if changes.contains(&Change::All) {
             changes = vec![Change::All];
         }
         changes.sort();
-        if !changes.is_empty() {
+        if !changes.is_empty() && !self.diag {
             self.push(&changes);
+        }
+    }
+
+    fn set_busy(&mut self, busy: bool) {
+        let mut info = self.info.clone();
+        info.busy = busy;
+        self.set_info(info);
+    }
+
+    /// One step of the guided test.
+    fn diag_cmd(&mut self, cmd: DiagCmd) {
+        match cmd {
+            DiagCmd::Begin => {
+                dlog!("=== prueba guiada: inicio ===");
+                self.diag = true;
+                if self.dev.is_none() && !self.demo {
+                    self.dev = Device::open(0).ok();
+                }
+                if let Some(dev) = &self.dev {
+                    dev.set_options(self.target.opts);
+                    dev.hold_bus(true);
+                }
+            }
+            DiagCmd::Run { action, method, release } => {
+                dlog!("=== prueba guiada: {action:?}, método {method:?}, liberar remoto {release} ===");
+                self.set_busy(true);
+                let text = if self.demo {
+                    thread::sleep(Duration::from_millis(400));
+                    format!("(demo) {action:?}")
+                } else {
+                    match &self.dev {
+                        None => "Dongle no encontrado".to_string(),
+                        Some(dev) => {
+                            dev.set_options(Options { method, release_remote: release, ..self.target.opts });
+                            let result = match action {
+                                DiagAction::Curve(bands) => dev.set_eq(EqPreset::Custom, &bands),
+                                DiagAction::Preset(p) => dev.set_eq(p, &self.target.profile.custom_eq),
+                                DiagAction::EqStatus(v) => dev.set_eq_status(v),
+                            };
+                            thread::sleep(Duration::from_millis(150));
+                            let back = dev.eq_readback();
+                            match result {
+                                Ok(()) => format!("Enviado. El headset dice: {back}"),
+                                Err(e) => format!("Error: {e}. El headset dice: {back}"),
+                            }
+                        }
+                    }
+                };
+                dlog!("resultado: {text}");
+                self.last_write = Instant::now();
+                self.set_busy(false);
+                self.emit(DevEvent::Diag(text));
+            }
+            DiagCmd::End(target) => {
+                dlog!("=== prueba guiada: fin, opciones {:?} ===", target.opts);
+                self.diag = false;
+                self.target = target;
+                if let Some(dev) = &self.dev {
+                    dev.hold_bus(false);
+                    dev.set_options(self.target.opts);
+                }
+                self.push(&[Change::All]);
+            }
         }
     }
 
     /// Send changes to the headset, if it's there to receive them.
     fn push(&mut self, changes: &[Change]) {
+        dlog!("enviar {changes:?}");
         if !self.info.status.headset_connected {
             self.message("Guardado. Se aplicará cuando el headset se conecte.", false);
             return;
         }
-        let mut info = self.info.clone();
-        info.busy = true;
-        self.set_info(info);
-
+        self.set_busy(true);
         let result = self.write(changes);
         self.last_write = Instant::now();
+        self.button_preset = false;
+        if crate::debuglog::enabled() && result.is_ok() && !self.demo {
+            if let Some(dev) = &self.dev {
+                dev.eq_readback();
+            }
+        }
+        self.set_busy(false);
 
-        let mut info = self.info.clone();
-        info.busy = false;
-        self.set_info(info);
         if let Err(e) = result {
+            dlog!("error al enviar: {e}");
             self.message(format!("No se pudo aplicar: {e}"), true);
-            self.dev = None; // reopen on next poll
+            if e != device::BUSY {
+                self.dev = None; // reopen on next poll
+            }
         } else if changes == [Change::All] {
             self.message(format!("Perfil «{}» aplicado", self.target.profile.name), false);
         }
@@ -253,7 +376,7 @@ impl DevWorker {
         let p = &self.target.profile;
         for change in changes {
             match change {
-                Change::All => dev.apply_profile(p, self.target.synapse_init)?,
+                Change::All => dev.apply_profile(p)?,
                 Change::Eq => dev.set_eq(p.active_preset(), &p.custom_eq)?,
                 Change::Sidetone => dev.set_sidetone(p.sidetone_wire())?,
                 Change::Dnd => dev.set_dnd(p.dnd)?,
@@ -275,11 +398,17 @@ impl DevWorker {
         }
         if self.dev.is_none() {
             self.dev = Device::open(0).ok();
+            if let Some(dev) = &self.dev {
+                dev.set_options(self.target.opts);
+            }
         }
         let dev = self.dev.as_ref()?;
         match dev.status() {
             Ok(st) => Some(st),
-            Err(_) => {
+            // The watcher is mid-sequence: keep the last state.
+            Err(e) if e == device::BUSY => Some(self.info.status.clone()),
+            Err(e) => {
+                dlog!("error al leer el estado: {e}");
                 self.dev = None;
                 None
             }
@@ -346,14 +475,20 @@ impl DevWorker {
             return;
         }
 
-        // Preset switched from the headset's EQ button?
+        // Preset switched from the headset's EQ button, or our write
+        // didn't take? Either way, show what the headset really plays.
         if let Some(p) = self.info.status.preset {
             if connected
                 && self.last_write.elapsed() > PRESET_SETTLE
                 && p != self.target.profile.active_preset()
             {
+                let from_button = std::mem::take(&mut self.button_preset);
+                dlog!(
+                    "el headset está en {p:?}, el perfil dice {:?} (botón: {from_button})",
+                    self.target.profile.active_preset()
+                );
                 self.target.profile.select_preset(p);
-                self.emit(DevEvent::PresetChanged(p));
+                self.emit(DevEvent::PresetChanged { preset: p, from_button });
             }
         }
     }

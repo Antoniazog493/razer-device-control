@@ -1,5 +1,6 @@
 /// Desktop control panel, laid out like Razer Synapse 4's audio pages.
 
+mod diag;
 mod theme;
 mod widgets;
 
@@ -8,10 +9,10 @@ use std::path::Path;
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use crate::config::{Config, EqMode, Profile};
+use crate::config::{Config, EqMethod, EqMode, Profile};
 use crate::protocol::{self, EqPreset};
-use crate::worker::{self, AudioCmd, AudioState, Change, DevCmd, DevEvent, DeviceInfo, Target};
-use crate::{connlog, registry, synapse, winaudio};
+use crate::worker::{self, AudioCmd, AudioState, Change, DevCmd, DevEvent, DeviceInfo, DiagCmd, Target};
+use crate::{connlog, debuglog, registry, synapse, winaudio};
 use theme::*;
 use widgets::*;
 
@@ -19,15 +20,20 @@ const CONTENT_MAX_WIDTH: f32 = 1080.0;
 const TOAST_TIME: Duration = Duration::from_secs(4);
 const SAVE_DELAY: Duration = Duration::from_millis(500);
 
-pub fn run(demo: bool) -> Result<(), String> {
+/// Open the panel. It draws with wgpu (Direct3D 12 on Windows): OpenGL
+/// showed occasional black frames on Windows. `glow` forces OpenGL, for
+/// PCs where Direct3D 12 isn't available.
+pub fn run(demo: bool, glow: bool) -> Result<(), String> {
     let options = eframe::NativeOptions {
         viewport: egui::ViewportBuilder::default()
             .with_title("rzr — Razer BlackShark V2 Pro")
             .with_inner_size([1140.0, 860.0])
             .with_min_inner_size([940.0, 640.0])
             .with_icon(app_icon()),
+        renderer: if glow { eframe::Renderer::Glow } else { eframe::Renderer::Wgpu },
         ..Default::default()
     };
+    crate::dlog!("ventana: {:?}", options.renderer);
     eframe::run_native(
         "rzr",
         options,
@@ -93,6 +99,8 @@ struct RzrApp {
     conn_log: Vec<String>,
     conn_drops_today: usize,
     conn_log_read: Option<Instant>,
+    /// Guided EQ test, when open.
+    wizard: Option<diag::Wizard>,
 }
 
 impl RzrApp {
@@ -118,6 +126,7 @@ impl RzrApp {
             conn_log: Vec::new(),
             conn_drops_today: 0,
             conn_log_read: None,
+            wizard: None,
         }
     }
 
@@ -165,10 +174,27 @@ impl RzrApp {
             match ev {
                 DevEvent::Info(info) => self.info = info,
                 DevEvent::Message { text, error } => self.toast(text, error),
-                DevEvent::PresetChanged(p) => {
-                    self.profile_mut().select_preset(p);
+                DevEvent::PresetChanged { preset, from_button } => {
+                    let wanted = self.profile().active_preset();
+                    self.profile_mut().select_preset(preset);
                     self.mark_dirty();
-                    self.toast(format!("Preset cambiado desde el headset: {}", p.label()), false);
+                    if from_button {
+                        self.toast(format!("Preset cambiado desde el headset: {}", preset.label()), false);
+                    } else {
+                        self.toast(
+                            format!(
+                                "El headset está en {} y no en {}. Si no usaste su botón EQ, no aceptó el cambio: haz la «Prueba guiada» en AJUSTES.",
+                                preset.label(),
+                                wanted.label()
+                            ),
+                            true,
+                        );
+                    }
+                }
+                DevEvent::Diag(text) => {
+                    if let Some(w) = &mut self.wizard {
+                        w.on_result(text);
+                    }
                 }
             }
         }
@@ -835,18 +861,9 @@ impl RzrApp {
                 faint_text(ui, "Equivale a ejecutar «rzr --silent --watch» al iniciar sesión.");
             });
             cols[0].add_space(12.0);
-            card(&mut cols[0], |ui| {
-                card_title(ui, "AVANZADO", None, None);
-                let mut legacy = self.cfg.send_legacy_config;
-                ui.horizontal(|ui| {
-                    if toggle(ui, &mut legacy, true).changed() {
-                        self.cfg.send_legacy_config = legacy;
-                        self.store();
-                    }
-                    ui.label("Enviar la secuencia de inicio de Synapse al aplicar el perfil completo");
-                });
-                faint_text(ui, "Consulta la versión del dongle y desactiva «Speaker Preset EQ Status» (0x9E), igual que Synapse al iniciar. Desactívalo solo si notas algún problema.");
-            });
+            self.diagnostics_card(&mut cols[0]);
+            cols[0].add_space(12.0);
+            self.advanced_card(&mut cols[0]);
 
             card(&mut cols[1], |ui| {
                 card_title(ui, "PERFILES", None, None);
@@ -877,6 +894,120 @@ impl RzrApp {
                 faint_text(ui, "Protocolo USB por ingeniería inversa de Synapse 4, verificado con el driver de OpenRazer para este headset.");
             });
         });
+    }
+
+    fn diagnostics_card(&mut self, ui: &mut egui::Ui) {
+        card(ui, |ui| {
+            card_title(
+                ui,
+                "DIAGNÓSTICO",
+                None,
+                Some("Para cuando algo no funciona: la prueba guiada averigua cómo hablarle a tu headset, y el registro guarda cada comando para poder analizarlo."),
+            );
+            if ui.button(RichText::new("Prueba guiada del ecualizador…").size(14.0)).clicked() {
+                self.start_wizard();
+            }
+            faint_text(ui, "Si cambiar el ecualizador no cambia el sonido, haz esta prueba (unos 3 minutos, con música puesta).");
+            ui.add_space(8.0);
+            let mut on = self.cfg.debug_log;
+            ui.horizontal(|ui| {
+                if toggle(ui, &mut on, true).changed() {
+                    self.cfg.debug_log = on;
+                    debuglog::set_enabled(on);
+                    self.store();
+                }
+                ui.label("Registro de depuración (debug.log)");
+            });
+            faint_text(ui, "Guarda cada comando enviado y recibido del headset. Déjalo apagado salvo que estés investigando un problema.");
+            ui.horizontal(|ui| {
+                if external_link(ui, "Abrir debug.log").clicked() {
+                    winaudio::open_path(&debuglog::path());
+                }
+                ui.add_space(16.0);
+                if external_link(ui, "Abrir carpeta").clicked() {
+                    if let Some(dir) = debuglog::path().parent() {
+                        let _ = std::fs::create_dir_all(dir);
+                        winaudio::open_path(dir);
+                    }
+                }
+            });
+        });
+    }
+
+    fn advanced_card(&mut self, ui: &mut egui::Ui) {
+        card(ui, |ui| {
+            card_title(ui, "AVANZADO", None, Some("La prueba guiada ajusta esto sola. Cámbialo a mano solo si sabes lo que haces."));
+            let mut changed = false;
+            ui.horizontal(|ui| {
+                ui.label("Método de envío del ecualizador");
+                egui::ComboBox::from_id_salt("eq_method")
+                    .selected_text(match self.cfg.eq_method {
+                        EqMethod::Verified => "Verificado (actual)",
+                        EqMethod::Original => "Primera versión de rzr",
+                    })
+                    .show_ui(ui, |ui| {
+                        changed |= ui.selectable_value(&mut self.cfg.eq_method, EqMethod::Verified, "Verificado (actual)").changed();
+                        changed |= ui.selectable_value(&mut self.cfg.eq_method, EqMethod::Original, "Primera versión de rzr").changed();
+                    });
+            });
+            ui.horizontal(|ui| {
+                changed |= toggle(ui, &mut self.cfg.release_remote, true).changed();
+                ui.label("Devolver el control al headset tras cada comando");
+            });
+            ui.horizontal(|ui| {
+                changed |= toggle(ui, &mut self.cfg.send_legacy_config, true).changed();
+                ui.label(format!("Secuencia de inicio de Synapse (0x9E = {})", self.cfg.eq_status));
+            });
+            faint_text(ui, "La secuencia de inicio consulta la versión del dongle y fija «Speaker Preset EQ Status» (0x9E) al aplicar el perfil completo, como Synapse al arrancar.");
+            if changed {
+                self.push(Change::All);
+            }
+        });
+    }
+
+    // ------------------------------------------------------------ guided test
+
+    fn start_wizard(&mut self) {
+        debuglog::set_enabled(true);
+        crate::dlog!("prueba guiada abierta; config: {:?}", Target::from_config(&self.cfg).opts);
+        let _ = self.dev_tx.send(DevCmd::Diag(DiagCmd::Begin));
+        self.wizard = Some(diag::Wizard::new());
+    }
+
+    fn wizard_ui(&mut self, ctx: &egui::Context) {
+        let Some(w) = &mut self.wizard else { return };
+        for req in w.show(ctx, self.info.status.headset_connected, self.info.busy) {
+            match req {
+                diag::Request::Run { action, method, release } => {
+                    let _ = self.dev_tx.send(DevCmd::Diag(DiagCmd::Run { action, method, release }));
+                }
+                diag::Request::Finish(outcome) => {
+                    for line in &outcome.summary {
+                        crate::dlog!("respuesta: {line}");
+                    }
+                    if let Some((method, release)) = outcome.method {
+                        self.cfg.eq_method = method;
+                        self.cfg.release_remote = release;
+                    }
+                    if let Some(v) = outcome.eq_status {
+                        self.cfg.eq_status = v;
+                        self.cfg.send_legacy_config = true;
+                    }
+                    self.end_wizard();
+                }
+                diag::Request::Cancel => {
+                    crate::dlog!("prueba guiada cancelada");
+                    self.end_wizard();
+                }
+            }
+        }
+    }
+
+    fn end_wizard(&mut self) {
+        self.wizard = None;
+        self.save_now();
+        let _ = self.dev_tx.send(DevCmd::Diag(DiagCmd::End(Target::from_config(&self.cfg))));
+        debuglog::set_enabled(self.cfg.debug_log);
     }
 
     // --------------------------------------------------------------- overlays
@@ -999,6 +1130,7 @@ impl eframe::App for RzrApp {
 
         let ctx = ui.ctx().clone();
         self.dialogs(&ctx);
+        self.wizard_ui(&ctx);
         self.toasts_ui(&ctx);
 
         if let Some(since) = self.dirty_since {

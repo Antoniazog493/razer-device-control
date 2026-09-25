@@ -41,7 +41,6 @@ pub const TYPE_EQ: u8 = 0x0D;
 pub const CMD_SERIAL: u8 = 0x00;
 pub const CMD_FIRMWARE: u8 = 0x02;
 pub const CMD_PRESET_GET: u8 = 0x13;
-#[allow(dead_code)] // documented, not read yet
 pub const CMD_EQ_GET: u8 = 0x15;
 #[allow(dead_code)] // documented, not read yet
 pub const CMD_SIDETONE_GET: u8 = 0x18;

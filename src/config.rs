@@ -113,6 +113,17 @@ impl Profile {
     }
 }
 
+/// How EQ changes are sent. The guided test in AJUSTES picks whichever one
+/// the user can actually hear.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EqMethod {
+    /// Synapse/OpenRazer sequences with read-back verification.
+    Verified,
+    /// The first rzr release's sequence, sent twice, no read-back.
+    Original,
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Config {
@@ -126,6 +137,14 @@ pub struct Config {
     /// Send Synapse's startup frames (dongle query, 0x9E = 0) before a full
     /// apply. Field name kept from earlier releases.
     pub send_legacy_config: bool,
+    /// Value sent for "Speaker Preset EQ Status" (0x9E) in that sequence.
+    pub eq_status: u8,
+    pub eq_method: EqMethod,
+    /// Hand control back to the headset (remote mode off) after each
+    /// command, as OpenRazer does. The first rzr release never did.
+    pub release_remote: bool,
+    /// Write debug.log (every HID frame and what the app was doing).
+    pub debug_log: bool,
 }
 
 impl Default for Config {
@@ -137,6 +156,10 @@ impl Default for Config {
             default_microphone: String::new(),
             wait_timeout_ms: 5000,
             send_legacy_config: true,
+            eq_status: 0,
+            eq_method: EqMethod::Verified,
+            release_remote: true,
+            debug_log: false,
         }
     }
 }

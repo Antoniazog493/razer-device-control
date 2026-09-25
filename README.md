@@ -1,6 +1,6 @@
 # rzr
 
-Panel de control liviano para los audífonos **Razer BlackShark V2 Pro** (versión 2.4 GHz + Bluetooth, dongle `1532:0555`) que **reemplaza a Razer Synapse**. Es un solo `.exe` portátil de ~6 MB, sin instalador ni servicios en segundo plano.
+Panel de control liviano para los audífonos **Razer BlackShark V2 Pro** (versión 2.4 GHz + Bluetooth, dongle `1532:0555`) que **reemplaza a Razer Synapse**. Es un solo `.exe` portátil de ~9 MB, sin instalador ni servicios en segundo plano.
 
 ![Pestaña Sonido](docs/sonido.png)
 
@@ -56,7 +56,9 @@ Haz **doble clic en `rzr.exe`** y se abre el panel. Cada cambio se guarda y se e
 - **Importar de Synapse:** exporta tu perfil desde Synapse (archivo `.synapse4`) y usa *Importar de Synapse…* o **arrástralo a la ventana**. Se importan el ecualizador, el sidetone, el apagado automático y No molestar.
 - **Iniciar con Windows:** actívalo en *AJUSTES*. rzr quedará en segundo plano, sin ventana, y aplicará tu perfil cada vez que el headset se conecte o reconecte.
 - **Caídas de conexión:** rzr anota cada vez que el headset pierde el enlace con el dongle y cuánto tardó en volver, en `%APPDATA%\rzr\conexion.log`. Las últimas aparecen en *ENERGÍA*. Usa los avisos que el propio headset envía, así que también detecta cortes de pocos segundos.
-- **Botón EQ del headset:** si cambias de preset con el botón físico, el panel lo detecta y actualiza la selección.
+- **Botón EQ del headset:** si cambias de preset con el botón físico, el panel lo detecta y actualiza la selección. Si el headset no acepta un cambio hecho desde el panel, el panel muestra el preset que realmente suena y lo avisa.
+- **Si el ecualizador no cambia el sonido:** en *AJUSTES › DIAGNÓSTICO* abre la **Prueba guiada del ecualizador**. Con música puesta, prueba cada método (A = graves, B = agudos) y responde si oyes el cambio; rzr se queda con el primero que funcione y guarda todo en `debug.log`.
+- **Registro de depuración:** *AJUSTES › DIAGNÓSTICO* (apagado por defecto). Guarda cada comando enviado y recibido del headset en `%APPDATA%\rzr\debug.log` (4 MB como máximo; el anterior queda en `debug.old.log`).
 
 ### Línea de comandos
 
@@ -67,6 +69,9 @@ rzr import ARCHIVO     Importa perfiles de un .synapse4
 rzr --watch            Vigila el headset y aplica el perfil al conectar
 rzr --silent --watch   Lo mismo, en segundo plano sin salida (para el inicio)
 rzr help               Ayuda
+
+--debug                Escribe debug.log aunque esté apagado en AJUSTES
+--glow                 Dibuja el panel con OpenGL en vez de Direct3D 12
 ```
 
 La configuración se guarda en `%APPDATA%\rzr\config.json`. La primera vez, rzr migra la configuración de versiones anteriores (`HKCU\SOFTWARE\rzr`).
@@ -119,18 +124,22 @@ Una respuesta puede traer varios mensajes "PI" seguidos. El byte `[1]` es el lar
 - Un cambio de preset que cruza de familia (clásico ↔ esports) solo cambia la familia. rzr lee el preset activo y reintenta hasta confirmarlo.
 - El headset guarda una curva `0x95` en el preset que esté activo. rzr confirma que el preset correcto está activo antes de escribirla. Luego reenvía el selector para que la curva nueva se escuche de inmediato. Igual que Synapse, rzr escribe también la curva de cada preset Esports; Juego/Música/Película vienen de fábrica y solo se seleccionan.
 - Los presets Juego/Música/Película editados en Synapse solo cambian el EQ por software de THX; el headset sigue usando su curva de fábrica. Por eso en rzr son de solo lectura.
+- Una consulta termina con el modo remoto apagado. Si llega en medio de una escritura de otro proceso, el headset ignora el resto de la escritura. Por eso el panel y el proceso en segundo plano comparten un candado (mutex `Local\rzr_hid_bus`) y nunca envían a la vez.
+- Todavía sin confirmar en este headset: si el modo remoto debe quedar encendido para que el EQ se oiga (la primera versión de rzr nunca lo apagaba) y qué hace `0x9E`. La prueba guiada lo averigua y guarda el resultado (`eq_method`, `release_remote`, `eq_status` en `config.json`).
 
 ## Código
 
 | Archivo | Contenido |
 |---|---|
 | `src/protocol.rs` | Construcción de frames, tabla de comandos, presets |
-| `src/device.rs` | Comunicación HID y secuencias de escritura verificadas |
+| `src/device.rs` | Comunicación HID y secuencias de escritura (verificada y la original) |
+| `src/debuglog.rs` | Registro de depuración opcional (`debug.log`) |
+| `src/instance.rs` | Instancia única del proceso en segundo plano y candado del dongle |
 | `src/config.rs` | Perfiles y configuración (JSON) |
 | `src/synapse.rs` | Importador de `.synapse4` |
 | `src/winaudio.rs` | Volumen, silencio y dispositivo predeterminado de Windows |
 | `src/worker.rs` | Hilos en segundo plano (headset y audio) para la interfaz |
-| `src/gui/` | Interfaz (egui) con estilo Synapse |
+| `src/gui/` | Interfaz (egui) con estilo Synapse; `diag.rs` es la prueba guiada |
 | `src/registry.rs` | Migración del registro e inicio con Windows |
 
 `rzr --demo` abre el panel con un headset simulado, útil para probar la interfaz sin el dispositivo.

@@ -4,6 +4,7 @@
 
 mod config;
 mod connlog;
+mod debuglog;
 mod device;
 mod gui;
 mod instance;
@@ -42,6 +43,18 @@ fn main() {
     let has = |flags: &[&str]| args.iter().any(|a| flags.contains(&a.as_str()));
     let silent = has(&["--silent", "-s"]);
     let watch = has(&["--watch", "-w"]);
+    let debug = has(&["--debug"]);
+
+    let source = if watch {
+        "segundo plano"
+    } else if silent || args.len() > 1 && !has(&["--demo", "--debug", "--glow"]) {
+        "cli"
+    } else {
+        "panel"
+    };
+    debuglog::init(source, debug);
+    debuglog::set_enabled(Config::load().debug_log);
+    dlog!("inicio: {:?}", &args[1..]);
 
     if silent {
         if watch {
@@ -62,7 +75,13 @@ fn main() {
     let cmd = positional.first().copied();
 
     if matches!(cmd, None | Some("config") | Some("gui")) && !watch && !has(&["--help", "-h"]) {
-        if let Err(e) = gui::run(has(&["--demo"])) {
+        let glow = has(&["--glow"]);
+        if let Err(e) = gui::run(has(&["--demo"]), glow) {
+            dlog!("no se pudo abrir la ventana: {e}");
+            // No Direct3D 12 / Vulkan: start again with OpenGL.
+            if !glow && relaunch_with_glow(&args) {
+                return;
+            }
             attach_console();
             eprintln!("rzr: could not open the window: {e}");
             std::process::exit(1);
@@ -87,6 +106,16 @@ fn main() {
     }
 }
 
+/// Start a new rzr process with the same arguments plus --glow.
+fn relaunch_with_glow(args: &[String]) -> bool {
+    let Ok(exe) = std::env::current_exe() else { return false };
+    std::process::Command::new(exe)
+        .args(&args[1..])
+        .arg("--glow")
+        .spawn()
+        .is_ok()
+}
+
 fn print_help() {
     println!("rzr - Razer BlackShark V2 Pro control panel");
     println!();
@@ -100,6 +129,7 @@ fn print_help() {
     println!("  rzr --watch            Watch for headset and apply on connect");
     println!("  rzr --silent           Apply silently (no output, for startup)");
     println!("  rzr --silent --watch   Watch silently (best for startup)");
+    println!("  --debug                Also write debug.log (every HID frame)");
     println!("  rzr help               Show this help");
     println!();
     println!("Settings are stored in {}", Config::path().display());
@@ -111,7 +141,10 @@ fn run_silent() {
         Ok(d) => d,
         Err(_) => std::process::exit(1),
     };
-    let _ = dev.apply_profile(cfg.profile(), cfg.send_legacy_config);
+    dev.set_options(device::Options::from_config(&cfg));
+    if let Err(e) = dev.apply_profile(cfg.profile()) {
+        dlog!("error al aplicar: {e}");
+    }
     worker::apply_default_devices(&Target::from_config(&cfg));
 }
 
@@ -188,8 +221,15 @@ fn run_watch(silent: bool) {
         }
         next_check = Instant::now() + poll_interval;
 
+        // Pick up changes made in the panel (method, debug log).
+        let cfg = Config::load();
+        debuglog::set_enabled(cfg.debug_log);
+        d.set_options(device::Options::from_config(&cfg));
+
         let connected = match d.link_status() {
             Ok(c) => c,
+            // The panel is mid-sequence (or running the guided test).
+            Err(e) if e == device::BUSY => continue,
             Err(_) => {
                 dev = None;
                 continue;
@@ -204,12 +244,15 @@ fn run_watch(silent: bool) {
 
         if connected && !applied {
             // Headset just connected (or first detection).
-            // Reload so changes made in the GUI are picked up.
-            let cfg = Config::load();
             if !silent {
                 println!("  Headset connected, applying profile \"{}\"...", cfg.profile().name);
             }
-            let result = d.apply_profile(cfg.profile(), cfg.send_legacy_config);
+            let result = d.apply_profile(cfg.profile());
+            if let Err(e) = &result {
+                dlog!("error al aplicar: {e}");
+            }
+            // Busy = the panel was sending at the same time; retry next check.
+            let busy = matches!(&result, Err(e) if e == device::BUSY);
             if !silent {
                 if let Some(batt) = d.get_battery() {
                     println!("  Battery: {}%", batt);
@@ -219,8 +262,10 @@ fn run_watch(silent: bool) {
                     Err(e) => println!("  Failed: {e}"),
                 }
             }
-            worker::apply_default_devices(&Target::from_config(&cfg));
-            applied = true;
+            if !busy {
+                worker::apply_default_devices(&Target::from_config(&cfg));
+                applied = true;
+            }
         }
 
         if was_connected && !connected {
@@ -250,6 +295,7 @@ fn run_apply() {
     };
 
     println!(" found {}", dev.product);
+    dev.set_options(device::Options::from_config(&cfg));
 
     if !dev.is_headset_connected() {
         eprintln!("  Headset is off or out of range.");
@@ -263,7 +309,7 @@ fn run_apply() {
     print!("  Applying profile \"{}\"...", cfg.profile().name);
     io::stdout().flush().ok();
 
-    match dev.apply_profile(cfg.profile(), cfg.send_legacy_config) {
+    match dev.apply_profile(cfg.profile()) {
         Ok(()) => println!(" done!"),
         Err(e) => {
             eprintln!(" failed: {e}");

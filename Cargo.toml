@@ -6,13 +6,15 @@ description = "Razer BlackShark V2 Pro control panel — replaces Razer Synapse 
 license = "MIT"
 
 [dependencies]
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "x11"] }
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wgpu_no_default_features", "x11"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [target.'cfg(windows)'.dependencies]
+# Panel drawn with Direct3D 12 only (OpenGL via glow is the fallback).
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "dx12", "wgsl"] }
 hidapi = "2.6"
 winreg = "0.55"
 rfd = { version = "0.15", default-features = false }
@@ -29,6 +31,7 @@ windows = { version = "0.62", features = [
 
 # Non-Windows builds exist for development; pure-Rust hidraw backend.
 [target.'cfg(not(windows))'.dependencies]
+wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "vulkan", "gles", "wgsl"] }
 hidapi = { version = "2.6", default-features = false, features = ["linux-native-basic-udev"] }
 
 [profile.release]
