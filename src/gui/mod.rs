@@ -587,6 +587,8 @@ impl RzrApp {
                 ui,
                 "MEJORAS DE SONIDO (SOFTWARE)",
                 &["BASS BOOST", "NORMALIZACIÓN DE SONIDO", "CLARIDAD DE VOZ", "THX SPATIAL AUDIO"],
+                "Synapse las aplica con el motor de audio de THX que instala en tu PC; el headset no las implementa (Synapse no le envía ningún comando para ellas).",
+                true,
             );
         });
     }
@@ -616,6 +618,8 @@ impl RzrApp {
                 &mut cols[1],
                 "MEJORAS DE MICRÓFONO (SOFTWARE)",
                 &["ECUALIZADOR DE MICRÓFONO", "NORMALIZACIÓN DE VOLUMEN", "CLARIDAD VOCAL", "REDUCCIÓN DE RUIDO AMBIENTAL", "SENSIBILIDAD (PUERTA DE VOZ)"],
+                "Synapse procesa estas funciones en el PC; no envía ningún comando al headset para ellas, por eso no están disponibles sin Synapse.",
+                false,
             );
         });
     }
@@ -670,10 +674,10 @@ impl RzrApp {
             }
             dim_text(ui, "Escucha tu propia voz a través de los auriculares mientras hablas.");
             ui.add_space(4.0);
-            let mut v = self.profile().sidetone_level as i32 * 10;
-            let r = slider(ui, &mut v, 10..=100, 10, ("10", None, "100"), on, |v| v.to_string());
+            let mut v = self.profile().sidetone_volume as i32;
+            let r = slider(ui, &mut v, 1..=100, 1, ("0", None, "100"), on, |v| v.to_string());
             if r.changed {
-                self.profile_mut().sidetone_level = (v / 10) as u8;
+                self.profile_mut().sidetone_volume = v as u8;
                 self.mark_dirty();
             }
             if r.committed {
@@ -748,7 +752,8 @@ impl RzrApp {
                 ("Dispositivo", if self.info.product.is_empty() { "—".to_string() } else { self.info.product.clone() }),
                 ("Dongle conectado", yes_no(self.info.dongle).to_string()),
                 ("Headset enlazado", yes_no(self.info.status.headset_connected).to_string()),
-                ("Firmware", self.info.firmware.clone().unwrap_or_else(|| "—".into())),
+                ("Firmware del headset", self.info.firmware.clone().unwrap_or_else(|| "—".into())),
+                ("Firmware del dongle", self.info.dongle_firmware.clone().unwrap_or_else(|| "—".into())),
                 ("Número de serie", self.info.serial.clone().unwrap_or_else(|| "—".into())),
                 ("Preajuste activo en el headset", self.info.status.preset.map(|p| p.label().to_string()).unwrap_or_else(|| "—".into())),
             ];
@@ -785,9 +790,9 @@ impl RzrApp {
                         self.cfg.send_legacy_config = legacy;
                         self.store();
                     }
-                    ui.label("Enviar SET_CONFIG de Synapse al aplicar el perfil completo");
+                    ui.label("Enviar la secuencia de inicio de Synapse al aplicar el perfil completo");
                 });
-                faint_text(ui, "Paso que Synapse envía al cambiar de perfil. Desactívalo solo si notas algún problema.");
+                faint_text(ui, "Consulta la versión del dongle y desactiva «Speaker Preset EQ Status» (0x9E), igual que Synapse al iniciar. Desactívalo solo si notas algún problema.");
             });
 
             card(&mut cols[1], |ui| {
@@ -960,7 +965,8 @@ impl eframe::App for RzrApp {
 }
 
 /// Card for Synapse features that run on the PC rather than the headset.
-fn software_features_card(ui: &mut egui::Ui, title: &str, features: &[&str]) {
+/// `windows_alternative` adds a pointer to Windows' own sound enhancements.
+fn software_features_card(ui: &mut egui::Ui, title: &str, features: &[&str], note: &str, windows_alternative: bool) {
     card(ui, |ui| {
         card_title_disabled(ui, title);
         for f in features {
@@ -971,10 +977,17 @@ fn software_features_card(ui: &mut egui::Ui, title: &str, features: &[&str]) {
             });
         }
         ui.add_space(6.0);
-        dim_text(
-            ui,
-            "Synapse procesa estas funciones en el PC con su propio driver de audio; el headset no las implementa, por eso no están disponibles sin Synapse.",
-        );
+        dim_text(ui, note);
+        if windows_alternative {
+            ui.add_space(4.0);
+            faint_text(
+                ui,
+                "Sin Synapse, Windows ofrece sus propias mejoras para estos audífonos (Bass Boost, Loudness Equalization, sonido envolvente virtual): Panel de sonido › Reproducción › BlackShark › Propiedades › Mejoras.",
+            );
+            if external_link(ui, "Abrir Panel de sonido").clicked() {
+                winaudio::open_sound_settings();
+            }
+        }
     });
 }
 

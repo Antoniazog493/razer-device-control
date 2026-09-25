@@ -32,7 +32,7 @@ pub struct Target {
     pub profile: Profile,
     pub default_speaker: String,
     pub default_microphone: String,
-    pub legacy_config: bool,
+    pub synapse_init: bool,
 }
 
 impl Target {
@@ -41,7 +41,7 @@ impl Target {
             profile: cfg.profile().clone(),
             default_speaker: cfg.default_speaker.clone(),
             default_microphone: cfg.default_microphone.clone(),
-            legacy_config: cfg.send_legacy_config,
+            synapse_init: cfg.send_legacy_config,
         }
     }
 }
@@ -59,6 +59,7 @@ pub struct DeviceInfo {
     pub product: String,
     pub status: Status,
     pub firmware: Option<String>,
+    pub dongle_firmware: Option<String>,
     pub serial: Option<String>,
     pub busy: bool,
 }
@@ -206,7 +207,7 @@ impl DevWorker {
         let p = &self.target.profile;
         for change in changes {
             match change {
-                Change::All => dev.apply_profile(p, self.target.legacy_config)?,
+                Change::All => dev.apply_profile(p, self.target.synapse_init)?,
                 Change::Eq => dev.set_eq(p.active_preset(), &p.custom_eq)?,
                 Change::Sidetone => dev.set_sidetone(p.sidetone_wire())?,
                 Change::Dnd => dev.set_dnd(p.dnd)?,
@@ -264,6 +265,13 @@ impl DevWorker {
         info.status = status;
         let connected = info.status.headset_connected;
 
+        // The dongle answers this even with the headset off.
+        if info.dongle_firmware.is_none() {
+            info.dongle_firmware = match &self.dev {
+                Some(dev) => dev.get_dongle_firmware(),
+                None => Some("2.4.1.0".into()), // demo
+            };
+        }
         if connected && info.firmware.is_none() {
             if self.demo {
                 info.firmware = Some("v1.3".into());

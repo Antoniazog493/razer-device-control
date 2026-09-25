@@ -24,8 +24,8 @@ pub struct Profile {
     pub esports_preset: EqPreset,
     pub custom_eq: [i8; EQ_BANDS],
     pub sidetone_enabled: bool,
-    /// 1-10 on the wire (Synapse shows it as 10-100).
-    pub sidetone_level: u8,
+    /// 1-100, Synapse's scale (see protocol::sidetone_level for the wire value).
+    pub sidetone_volume: u8,
     pub dnd: bool,
     pub auto_off_enabled: bool,
     /// 15-60 minutes.
@@ -41,7 +41,7 @@ impl Default for Profile {
             esports_preset: EqPreset::ApexLegends,
             custom_eq: [1, -2, 1, -3, 1, -3, -5, 2, 2, 3],
             sidetone_enabled: false,
-            sidetone_level: 7,
+            sidetone_volume: 50,
             dnd: false,
             auto_off_enabled: false,
             auto_off_minutes: 15,
@@ -77,7 +77,7 @@ impl Profile {
     /// Sidetone level to send: 0 = off.
     pub fn sidetone_wire(&self) -> u8 {
         if self.sidetone_enabled {
-            self.sidetone_level
+            protocol::sidetone_level(self.sidetone_volume).max(1)
         } else {
             0
         }
@@ -103,7 +103,7 @@ impl Profile {
         if !self.esports_preset.is_esports() {
             self.esports_preset = EqPreset::ApexLegends;
         }
-        self.sidetone_level = self.sidetone_level.clamp(1, protocol::SIDETONE_MAX);
+        self.sidetone_volume = self.sidetone_volume.clamp(1, 100);
         self.auto_off_minutes = self
             .auto_off_minutes
             .clamp(protocol::AUTO_OFF_MIN_MINUTES, protocol::AUTO_OFF_MAX_MINUTES);
@@ -123,7 +123,8 @@ pub struct Config {
     pub default_microphone: String,
     /// How long `rzr apply` waits for the dongle.
     pub wait_timeout_ms: u32,
-    /// Send Synapse's SET_CONFIG frame before a full apply.
+    /// Send Synapse's startup frames (dongle query, 0x9E = 0) before a full
+    /// apply. Field name kept from earlier releases.
     pub send_legacy_config: bool,
 }
 
@@ -211,14 +212,14 @@ mod tests {
     fn sanitize_clamps_ranges() {
         let mut p = Profile {
             custom_eq: [9, -9, 0, 0, 0, 0, 0, 0, 0, 0],
-            sidetone_level: 0,
+            sidetone_volume: 0,
             auto_off_minutes: 90,
             ..Profile::default()
         };
         p.sanitize();
         assert_eq!(p.custom_eq[0], 5);
         assert_eq!(p.custom_eq[1], -5);
-        assert_eq!(p.sidetone_level, 1);
+        assert_eq!(p.sidetone_volume, 1);
         assert_eq!(p.auto_off_minutes, 60);
     }
 
@@ -237,7 +238,7 @@ mod tests {
     fn partial_json_gets_defaults() {
         let cfg: Config = serde_json::from_str(r#"{"profiles":[{"name":"A","dnd":true}]}"#).unwrap();
         assert!(cfg.profiles[0].dnd);
-        assert_eq!(cfg.profiles[0].sidetone_level, 7);
+        assert_eq!(cfg.profiles[0].sidetone_volume, 50);
         assert_eq!(cfg.wait_timeout_ms, 5000);
     }
 }

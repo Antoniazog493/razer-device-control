@@ -3,17 +3,21 @@
 # Uso (en PowerShell, desde la carpeta de este archivo):
 #   1) ANTES de instalar Synapse:   powershell -ExecutionPolicy Bypass -File .\capturar-synapse.ps1 -Fase antes
 #   2) Con Synapse instalado:       powershell -ExecutionPolicy Bypass -File .\capturar-synapse.ps1 -Fase synapse
+#   3) Synapse DESINSTALADO y PC reiniciado (mejoras de audio de Windows):
+#                                   powershell -ExecutionPolicy Bypass -File .\capturar-synapse.ps1 -Fase windows
 #
-# Todo queda en el Escritorio, en la carpeta "rzr-captura" y en "rzr-captura.zip".
+# Todo queda en el Escritorio, en la carpeta "rzr-captura" y en "rzr-captura.zip"
+# ("rzr-captura-windows" y su .zip en la fase windows).
 # El script solo LEE el registro y copia los logs de Synapse: no modifica nada.
 
 param(
-    [ValidateSet('antes', 'synapse')]
+    [ValidateSet('antes', 'synapse', 'windows')]
     [string]$Fase = 'synapse'
 )
 
 $ErrorActionPreference = 'Continue'
-$out = Join-Path ([Environment]::GetFolderPath('Desktop')) 'rzr-captura'
+$carpeta = if ($Fase -eq 'windows') { 'rzr-captura-windows' } else { 'rzr-captura' }
+$out = Join-Path ([Environment]::GetFolderPath('Desktop')) $carpeta
 New-Item -ItemType Directory -Force $out | Out-Null
 $timeline = Join-Path $out 'pasos.txt'
 $inicio = Get-Date
@@ -59,6 +63,25 @@ if ($Fase -eq 'antes') {
     exit
 }
 
+if ($Fase -eq 'windows') {
+    $pasos = @(
+        'Abre el Panel de sonido: tecla Windows + R, escribe mmsys.cpl y Enter. En Reproduccion, doble clic en los auriculares BlackShark. Ve a la pestana Mejoras / Enhancements. (Si no existe esa pestana, escribe s en todos los pasos y avisame.) No cambies nada todavia.',
+        'Mejoras: activa BASS BOOST / REFUERZO DE GRAVES y pulsa Aplicar.',
+        'Mejoras: con Bass Boost seleccionado pulsa Configuracion, cambia la frecuencia y el nivel de refuerzo, Aceptar y Aplicar.',
+        'Mejoras: desactiva BASS BOOST y pulsa Aplicar.',
+        'Mejoras: activa LOUDNESS EQUALIZATION / IGUALACION DE SONORIDAD y pulsa Aplicar.',
+        'Mejoras: con Loudness Equalization seleccionado pulsa Configuracion, cambia el tiempo de liberacion, Aceptar y Aplicar.',
+        'Mejoras: desactiva LOUDNESS EQUALIZATION y pulsa Aplicar.',
+        'Mejoras: activa VIRTUAL SURROUND / SONIDO ENVOLVENTE VIRTUAL y pulsa Aplicar.',
+        'Mejoras: desactiva VIRTUAL SURROUND y pulsa Aplicar.',
+        'Mejoras: activa ROOM CORRECTION / CORRECCION DE SALA si existe (si abre un asistente, cancelalo) y pulsa Aplicar.',
+        'Mejoras: desactiva ROOM CORRECTION y pulsa Aplicar.',
+        'Mejoras: marca DESHABILITAR TODAS LAS MEJORAS y pulsa Aplicar.',
+        'Mejoras: desmarca DESHABILITAR TODAS LAS MEJORAS y pulsa Aplicar. Cierra esa ventana.',
+        'Configuracion de Windows > Sistema > Sonido > tu microfono BlackShark: si ves Mejoras de audio o Claridad de voz, activalo.',
+        'Vuelve a dejar esa opcion del microfono como estaba.'
+    )
+} else {
 $pasos = @(
     'Abre Synapse en AUDIO con el headset ENCENDIDO y conectado por el dongle. No cambies nada todavia.',
     'MICROFONO: activa MIC MONITORING (sidetone).',
@@ -94,8 +117,18 @@ $pasos = @(
     'MEJORA: activa DO NOT DISTURB y luego desactivalo.',
     'Pulsa UNA vez el boton fisico de EQ del headset.'
 )
+}
 
 Write-Host ''
+if ($Fase -eq 'windows') {
+    Write-Host 'Captura guiada de las mejoras de audio de Windows para rzr' -ForegroundColor Green
+    Write-Host 'Haz cada cambio, espera 2 segundos y presiona Enter.'
+    Write-Host 'Si una opcion no existe, escribe s y Enter para saltarla.'
+    Write-Host 'Pon algo de musica: asi Windows aplica cada cambio de verdad.'
+    Write-Host ''
+    Save-Snapshot '00-windows-sin-synapse'
+    Log '00  Windows sin Synapse, antes de los pasos'
+} else {
 Write-Host 'Captura guiada de Synapse para rzr' -ForegroundColor Green
 Write-Host 'Haz cada cambio en Synapse, espera 2 segundos y presiona Enter.'
 Write-Host 'Si una opcion no existe en tu Synapse, escribe s y Enter para saltarla.'
@@ -104,6 +137,7 @@ Write-Host ''
 
 Save-Snapshot '00b-synapse-instalado'
 Log '00b Synapse instalado, antes de los pasos'
+}
 
 for ($i = 0; $i -lt $pasos.Count; $i++) {
     $n = '{0:D2}' -f ($i + 1)
@@ -115,6 +149,18 @@ for ($i = 0; $i -lt $pasos.Count; $i++) {
     }
     Log "$n  $($pasos[$i])"
     Save-Snapshot "paso-$n"
+}
+
+if ($Fase -eq 'windows') {
+    reg query 'HKLM\SOFTWARE\Classes\AudioEngine\AudioProcessingObjects' /s 2>&1 |
+        Out-File (Join-Path $out 'apos-windows.txt') -Encoding utf8
+    $zip = "$out.zip"
+    if (Test-Path $zip) { Remove-Item $zip }
+    Compress-Archive -Path "$out\*" -DestinationPath $zip
+    Write-Host ''
+    Write-Host "Listo: $zip" -ForegroundColor Green
+    Write-Host 'Enviame ese archivo.'
+    exit
 }
 
 Write-Host ''

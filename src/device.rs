@@ -94,8 +94,8 @@ impl Device {
         }
     }
 
-    /// Wait for the reply to `cmd_id`, up to REPLY_TIMEOUT.
-    fn read_reply(&self, cmd_id: u8) -> Option<Vec<u8>> {
+    /// Read input reports until `pick` accepts one, up to REPLY_TIMEOUT.
+    fn read_matching<T>(&self, pick: impl Fn(&[u8]) -> Option<T>) -> Option<T> {
         let deadline = Instant::now() + REPLY_TIMEOUT;
         let mut buf = [0u8; 64];
         loop {
@@ -105,14 +105,19 @@ impl Device {
             }
             match self.handle.read_timeout(&mut buf, left.as_millis() as i32) {
                 Ok(n) if n > 0 => {
-                    if let Some(payload) = proto::parse_reply(&buf[..n], cmd_id) {
-                        return Some(payload.to_vec());
+                    if let Some(v) = pick(&buf[..n]) {
+                        return Some(v);
                     }
                 }
                 Ok(_) => {}
                 Err(_) => return None,
             }
         }
+    }
+
+    /// Wait for the reply to `cmd_id`, up to REPLY_TIMEOUT.
+    fn read_reply(&self, cmd_id: u8) -> Option<Vec<u8>> {
+        self.read_matching(|buf| proto::parse_reply(buf, cmd_id).map(|p| p.to_vec()))
     }
 
     /// Read a register. Wake, then (remote on, query) up to QUERY_ATTEMPTS
@@ -170,6 +175,16 @@ impl Device {
     pub fn get_firmware(&self) -> Option<String> {
         let v = self.query(proto::CMD_FIRMWARE).ok()??;
         (v.len() >= 2).then(|| format!("v{}.{}", v[0], v[1]))
+    }
+
+    /// Firmware of the USB dongle itself (answers even with the headset off).
+    pub fn get_dongle_firmware(&self) -> Option<String> {
+        self.drain();
+        self.remote(true).ok()?;
+        self.handle.write(&proto::get_dongle_firmware()).ok()?;
+        let fw = self.read_matching(proto::parse_dongle_firmware);
+        self.remote(false).ok()?;
+        fw
     }
 
     pub fn get_serial(&self) -> Option<String> {
@@ -230,36 +245,41 @@ impl Device {
         Err(format!("El headset no confirmó el preset {}", preset.label()))
     }
 
-    /// Write the custom curve and make it audible.
+    /// Write a curve into a preset's slot (Custom or esports) and make it
+    /// audible.
     ///
     /// The headset stores a 0x95 frame into whichever preset is active, so
-    /// Custom must be confirmed first. Within one sequence the selector
-    /// latches the slot's previous content, so a selector-only re-apply
-    /// after the write is what makes the new curve audible.
-    pub fn set_custom_eq(&self, bands: &[i8; EQ_BANDS]) -> Result<(), String> {
-        if self.get_preset() != Some(EqPreset::Custom) {
-            self.set_preset(EqPreset::Custom)?;
+    /// the target preset must be confirmed first. Within one sequence the
+    /// selector latches the slot's previous content, so a selector-only
+    /// re-apply after the write is what makes the new curve audible.
+    fn set_slot_curve(&self, preset: EqPreset, bands: &[i8; EQ_BANDS]) -> Result<(), String> {
+        if self.get_preset() != Some(preset) {
+            self.set_preset(preset)?;
         }
 
         self.remote(true)?;
         self.remote(true)?;
         self.send(&proto::query(proto::CMD_PREP))?;
         self.remote(true)?;
-        self.send(&proto::set_preset(EqPreset::Custom))?;
+        self.send(&proto::set_preset(preset))?;
         self.remote(true)?;
-        self.send(&proto::set_mode_flag(EqPreset::Custom))?;
+        self.send(&proto::set_mode_flag(preset))?;
         self.remote(true)?;
         self.send(&proto::set_eq_bands(bands))?;
         self.remote(true)?;
 
         thread::sleep(Duration::from_millis(100));
-        self.apply_preset_once(EqPreset::Custom)
+        self.apply_preset_once(preset)
     }
 
-    /// Apply the EQ side of a profile.
+    /// Apply the EQ side of a profile. Game/Music/Movie are built into the
+    /// headset and only selected; Synapse also writes each esports preset's
+    /// curve into its slot, so rzr does the same.
     pub fn set_eq(&self, preset: EqPreset, custom: &[i8; EQ_BANDS]) -> Result<(), String> {
         if preset == EqPreset::Custom {
-            self.set_custom_eq(custom)
+            self.set_slot_curve(preset, custom)
+        } else if let (true, Some(curve)) = (preset.is_esports(), preset.curve()) {
+            self.set_slot_curve(preset, &curve)
         } else {
             self.set_preset(preset)
         }
@@ -273,12 +293,22 @@ impl Device {
         self.remote(false)
     }
 
-    /// Mic monitoring. 0 = off, 1-10 = level.
+    /// Mic monitoring. 0 = off, otherwise the wire level (see
+    /// protocol::sidetone_level). Levels above what OpenRazer saw the headset
+    /// accept are read back, and lowered if the headset didn't keep them.
     pub fn set_sidetone(&self, level: u8) -> Result<(), String> {
         let level = level.min(proto::SIDETONE_MAX);
         self.write_value(proto::CMD_SIDETONE, (level > 0) as u8)?;
         if level > 0 {
             self.write_value(proto::CMD_SIDETONE_LEVEL, level)?;
+            if level > proto::SIDETONE_SAFE_MAX {
+                match self.query_u8(proto::CMD_SIDETONE_LEVEL_GET)? {
+                    Some(got) if got != level => {
+                        self.write_value(proto::CMD_SIDETONE_LEVEL, proto::SIDETONE_SAFE_MAX)?;
+                    }
+                    _ => {}
+                }
+            }
         }
         Ok(())
     }
@@ -298,12 +328,14 @@ impl Device {
     }
 
     /// Apply the full profile to the headset.
-    pub fn apply_profile(&self, profile: &Profile, legacy_config: bool) -> Result<(), String> {
-        if legacy_config {
-            // Synapse's profile switch starts by configuring the pipeline.
-            self.remote(false)?;
-            self.remote(false)?;
-            self.send(&proto::set_config())?;
+    pub fn apply_profile(&self, profile: &Profile, synapse_init: bool) -> Result<(), String> {
+        if synapse_init {
+            // Synapse's startup: query the dongle, then clear "Speaker Preset
+            // EQ Status" (0x9E). OpenRazer found no audible effect from 0x9E;
+            // it's sent for parity with Synapse (and with earlier rzr releases,
+            // which sent the same bytes).
+            let _ = self.get_dongle_firmware();
+            self.write_value(proto::CMD_PRESET_EQ_STATUS, 0)?;
         }
         self.set_eq(profile.active_preset(), &profile.custom_eq)?;
         self.set_sidetone(profile.sidetone_wire())?;

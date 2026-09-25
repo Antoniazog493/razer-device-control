@@ -29,12 +29,18 @@ Al conectar los BlackShark V2 Pro sin Synapse, el audio suena bajo y plano: los 
 | Dispositivo de salida/entrada predeterminado al conectar | Windows | ✅ |
 | Varios perfiles, importar perfiles de Synapse (`.synapse4`) | rzr | ✅ |
 | Iniciar con Windows y aplicar el perfil al conectar/reconectar | rzr | ✅ |
-| Bass Boost, Normalización de sonido, Claridad de voz, THX Spatial Audio | Software de Synapse en el PC | ❌ ver abajo |
+| Bass Boost, Normalización de sonido, Claridad de voz, THX Spatial Audio | Motor THX en el PC (instalado por Synapse) | ❌ ver abajo |
 | EQ de micrófono, normalización, claridad vocal, reducción de ruido, puerta de voz | Software de Synapse en el PC | ❌ ver abajo |
 
 ### ¿Por qué faltan algunas funciones de Synapse?
 
-Esas mejoras **no las hace el headset**. Synapse procesa el audio en tu PC con su propio driver/efecto de audio. El driver de OpenRazer, verificado con este mismo headset, confirma que el comando de "mejora" (`0x9D`) no tiene ningún efecto en el dispositivo. Por eso rzr no puede activarlas enviando comandos por USB. Para tenerlas sin Synapse habría que procesar el audio en el PC, por ejemplo con [Equalizer APO](https://sourceforge.net/projects/equalizerapo/) (bass boost, EQ de micrófono) o NVIDIA Broadcast / RNNoise (reducción de ruido).
+Esas mejoras **no las hace el headset**. Una captura de los logs de Synapse 4 con este headset, activando y desactivando cada opción, lo confirma:
+
+- Synapse **no envía ningún comando USB** al headset para Bass Boost, Normalización, Claridad de voz, THX ni para ninguna mejora del micrófono.
+- Bass Boost, Normalización, Claridad de voz y THX Spatial Audio se aplican con `AudioEffectsTHXV3.setRender…`, es decir, en el **motor de audio de THX**. Synapse lo instala en Windows como efecto de audio ("THX Spatial Audio (BlackShark V2 Pro)") y **reemplaza** a los efectos de Windows que traían los audífonos ("Microsoft Audio Home Theater Effects").
+- Las mejoras de micrófono no produjeron ni comandos USB ni llamadas a THX.
+
+Sin Synapse, los audífonos vuelven a usar los efectos de Windows, que incluyen **Bass Boost, Loudness Equalization (normalización) y sonido envolvente virtual**. rzr podrá controlarlos una vez identificados sus ajustes: `tools/capturar-synapse.ps1 -Fase windows` los captura. Para el micrófono, las alternativas son [Equalizer APO](https://sourceforge.net/projects/equalizerapo/) (EQ) o NVIDIA Broadcast / RNNoise (reducción de ruido).
 
 ## Descarga
 
@@ -87,26 +93,30 @@ Las respuestas repiten el sub-frame desplazado: `[12]` = id del comando, `[13]` 
 | Función | Escritura | Lectura | Datos |
 |---|---|---|---|
 | Modo remoto (antes de cada secuencia) | `02/E1` | — | 1 = software, 0 = headset (en el byte flag) |
-| Selector de preset EQ | `04/93` | `03/13` | `07` Juego, `08` Música, `09` Película, `FF` Personalizado, `FA`–`FE` Esports |
+| Selector de preset EQ | `04/93` | `03/13` | `07` Juego, `08` Música, `09` Película, `FF` Personalizado; Esports: `FA` Apex, `FB` CS, `FC` Valorant, `FD` Fortnite, `FE` CoD |
 | Familia del preset | `04/9D` | — | 1 = clásico, 2 = esports |
-| Curva EQ personalizada | `0D/95` | `03/15` | 10 bytes con signo (dB) |
+| Estado del EQ de presets | `04/9E` | `03/1E` | Synapse envía 0 al iniciar; sin efecto audible según OpenRazer |
+| Curva EQ (Personalizado y cada Esports) | `0D/95` | `03/15` | 10 bytes con signo (dB), se guarda en el preset activo |
 | Sidetone on/off | `04/98` | `03/18` | 0/1 |
-| Nivel de sidetone | `04/99` | `03/19` | 1–10 |
+| Nivel de sidetone | `04/99` | `03/19` | Synapse 0–100 → 0–14 (50 → 7) |
 | No molestar | `04/A7` | `03/27` | 0/1 |
 | Apagado automático | `04/AC` | `03/2C` | minutos (15–60), 0 = nunca |
 | Enlace inalámbrico | — | `03/20` | 1 = headset conectado |
 | Batería / carga | — | `03/21` / `03/2A` | 0–100 / ≠0 = cargando |
 | Botón de silencio | — | `03/55` | 1 = silenciado |
 | Firmware / serie | — | `03/02` / `03/00` | |
-| SET_CONFIG de Synapse | `06/01` | — | `C2 03 F8 5F 04` |
+| Firmware del dongle | — | `06/01` + `C2 03 F8 5F 04` | respuesta con flag `C2`: 4 bytes (p. ej. 2.4.1.0) |
 
-> **Corrección respecto a la versión anterior:** el comando `0x93` que antes se llamaba "setVolume" es en realidad el **selector de preset** (`255` = `0xFF` = Personalizado, por eso funcionaba), y `0x9D` ("setEnhancement") solo indica la familia del preset.
+> **Correcciones respecto a la versión anterior:** el comando `0x93` que antes se llamaba "setVolume" es en realidad el **selector de preset** (`255` = `0xFF` = Personalizado, por eso funcionaba). `0x9D` ("setEnhancement") solo indica la familia del preset. El "SET_CONFIG" `06/01` es solo una consulta de la versión del dongle.
+
+Una respuesta puede traer varios mensajes "PI" seguidos. El byte `[1]` es el largo total y cada mensaje mide 13 + largo de datos. El byte flag vale `01` en la respuesta a un comando y `02` en un **evento** que el headset envía por su cuenta: conexión (`20`), batería (`21`), No molestar (`27`), carga (`2A`) y silencio del micrófono (`55`).
 
 ### Peculiaridades del firmware
 
 - El enlace 2.4 GHz se duerme tras ~0,3 s sin tráfico y descarta el primer frame que recibe. Cada secuencia empieza con un frame de modo remoto "de sacrificio".
 - Un cambio de preset que cruza de familia (clásico ↔ esports) solo cambia la familia. rzr lee el preset activo y reintenta hasta confirmarlo.
-- El headset guarda una curva `0x95` en el preset que esté activo. rzr confirma que Personalizado está activo antes de escribirla. Luego reenvía el selector para que la curva nueva se escuche de inmediato.
+- El headset guarda una curva `0x95` en el preset que esté activo. rzr confirma que el preset correcto está activo antes de escribirla. Luego reenvía el selector para que la curva nueva se escuche de inmediato. Igual que Synapse, rzr escribe también la curva de cada preset Esports; Juego/Música/Película vienen de fábrica y solo se seleccionan.
+- Los presets Juego/Música/Película editados en Synapse solo cambian el EQ por software de THX; el headset sigue usando su curva de fábrica. Por eso en rzr son de solo lectura.
 
 ## Código
 

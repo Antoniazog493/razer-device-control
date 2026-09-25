@@ -16,11 +16,14 @@
 ///   [13] data...
 /// ```
 ///
-/// Replies repeat the sub-frame shifted by two: [12]=cmd id, [13]=0x01 ACK,
-/// [14]=length, [15..]=payload.
+/// Replies are one or more "PI" frames packed after [0]=report id and
+/// [1]=total length. Each frame is 'P' 'I', eight header bytes, then
+/// cmd id, flag (0x01 = ACK of a request, 0x02 = unsolicited event), data
+/// length and data. The first frame puts the cmd id at [12].
 ///
 /// Command table cross-checked against the OpenRazer driver for this exact
-/// device (openrazer/openrazer#2862), which verified each register on hardware.
+/// device (openrazer/openrazer#2862), which verified each register on
+/// hardware, and against Synapse 4's own logs (names in quotes below).
 
 pub const PKT_SIZE: usize = 64;
 pub type Packet = [u8; PKT_SIZE];
@@ -31,7 +34,7 @@ const REPORT_ID: u8 = 0x02;
 pub const TYPE_REMOTE: u8 = 0x02;
 pub const TYPE_QUERY: u8 = 0x03;
 pub const TYPE_AUDIO: u8 = 0x04;
-pub const TYPE_CONFIG: u8 = 0x06;
+pub const TYPE_DONGLE: u8 = 0x06;
 pub const TYPE_EQ: u8 = 0x0D;
 
 // Getters (type 0x03). Rule: get_id = set_id - 0x80.
@@ -42,7 +45,6 @@ pub const CMD_PRESET_GET: u8 = 0x13;
 pub const CMD_EQ_GET: u8 = 0x15;
 #[allow(dead_code)] // documented, not read yet
 pub const CMD_SIDETONE_GET: u8 = 0x18;
-#[allow(dead_code)] // documented, not read yet
 pub const CMD_SIDETONE_LEVEL_GET: u8 = 0x19;
 pub const CMD_PREP: u8 = 0x1E;
 pub const CMD_WIRELESS: u8 = 0x20;
@@ -55,12 +57,13 @@ pub const CMD_AUTO_OFF_GET: u8 = 0x2C;
 pub const CMD_MIC_MUTE: u8 = 0x55;
 
 // Setters
-pub const CMD_CONFIG: u8 = 0x01; // type 0x06, sent by Synapse on profile switch
-pub const CMD_PRESET: u8 = 0x93; // EQ preset selector (see EqPreset)
-pub const CMD_EQ: u8 = 0x95; // 10 signed dB values, type 0x0D
-pub const CMD_SIDETONE: u8 = 0x98; // mic monitoring on/off
-pub const CMD_SIDETONE_LEVEL: u8 = 0x99; // mic monitoring level 1-10
-pub const CMD_MODE_FLAG: u8 = 0x9D; // 1 = classic preset, 2 = esports preset
+pub const CMD_DONGLE_FIRMWARE: u8 = 0x01; // type 0x06, "Get Dongle Firmware Version"
+pub const CMD_PRESET: u8 = 0x93; // "Set Preset EQ Index" (see EqPreset)
+pub const CMD_EQ: u8 = 0x95; // "Set Customer EQ Band": 10 signed dB values, type 0x0D
+pub const CMD_SIDETONE: u8 = 0x98; // "Set Sidetone status"
+pub const CMD_SIDETONE_LEVEL: u8 = 0x99; // "Set Sidetone Volume"
+pub const CMD_MODE_FLAG: u8 = 0x9D; // "Set Speaker Preset EQ Group": 1 classic, 2 esports
+pub const CMD_PRESET_EQ_STATUS: u8 = 0x9E; // "Set Speaker Preset EQ Status": Synapse sends 0 at start
 pub const CMD_DND: u8 = 0xA7; // Bluetooth "Do Not Disturb"
 pub const CMD_AUTO_OFF: u8 = 0xAC; // auto power-off minutes, 0 = off
 pub const CMD_REMOTE: u8 = 0xE1;
@@ -73,7 +76,12 @@ pub const EQ_FREQS: [&str; EQ_BANDS] = [
 pub const EQ_MIN_DB: i8 = -5;
 pub const EQ_MAX_DB: i8 = 5;
 
-pub const SIDETONE_MAX: u8 = 10;
+/// Highest sidetone level sent. Synapse maps its 0-100 slider linearly
+/// (50 -> 7 and 31 -> 4 on the wire), so 100 -> 14.
+pub const SIDETONE_MAX: u8 = 14;
+/// Highest level OpenRazer saw the headset accept; used as a fallback if it
+/// rejects a higher one.
+pub const SIDETONE_SAFE_MAX: u8 = 10;
 pub const AUTO_OFF_MIN_MINUTES: u8 = 15;
 pub const AUTO_OFF_MAX_MINUTES: u8 = 60;
 
@@ -112,10 +120,11 @@ pub fn set_remote_mode(enable: bool) -> Packet {
     frame(0x07, 0x0E, TYPE_REMOTE, CMD_REMOTE, &[enable as u8])
 }
 
-/// SET_CONFIG (0x06/0x01), captured from Synapse's profile switch.
-/// Params C2 03 F8 5F 04 (meaning unknown; kept for parity with Synapse).
-pub fn set_config() -> Packet {
-    frame(0x0B, 0x08, TYPE_CONFIG, CMD_CONFIG, &[0xC2, 0x03, 0xF8, 0x5F, 0x04])
+/// "Get Dongle Firmware Version" (0x06/0x01), the first frame of Synapse's
+/// startup. Addressed to the dongle itself; the reply carries flag 0xC2 and
+/// four version bytes. (Earlier rzr releases called this SET_CONFIG.)
+pub fn get_dongle_firmware() -> Packet {
+    frame(0x0B, 0x08, TYPE_DONGLE, CMD_DONGLE_FIRMWARE, &[0xC2, 0x03, 0xF8, 0x5F, 0x04])
 }
 
 /// Select an EQ preset (0x93).
@@ -139,18 +148,59 @@ pub fn set_value(cmd_id: u8, value: u8) -> Packet {
     command(TYPE_AUDIO, cmd_id, &[value])
 }
 
-/// Extract the payload of a reply to `cmd_id`, if `buf` is one.
-/// Replies carry the echoed id at [12] and 0x01 (ACK) at [13]; the ACK check
-/// filters out the unsolicited telemetry frames the headset also sends.
-pub fn parse_reply(buf: &[u8], cmd_id: u8) -> Option<&[u8]> {
+/// One "PI" frame of an input report.
+pub struct Frame<'a> {
+    pub cmd: u8,
+    pub flag: u8,
+    pub data: &'a [u8],
+}
+
+pub const FLAG_ACK: u8 = 0x01;
+#[allow(dead_code)] // unsolicited events (battery, mic mute, DND...), not used yet
+pub const FLAG_EVENT: u8 = 0x02;
+
+/// Split an input report into its "PI" frames.
+pub fn frames(buf: &[u8]) -> Vec<Frame<'_>> {
     // hidapi keeps the report id at [0]; tolerate a backend that strips it.
-    let off = if buf.first() == Some(&REPORT_ID) { 12 } else { 11 };
-    if buf.len() <= off + 2 || buf[off] != cmd_id || buf[off + 1] != 0x01 {
-        return None;
+    let (mut off, end) = if buf.first() == Some(&REPORT_ID) && buf.len() > 1 {
+        (2, (2 + buf[1] as usize).min(buf.len()))
+    } else {
+        (1, buf.len())
+    };
+    let mut out = Vec::new();
+    while off + 13 <= end && buf[off] == b'P' && buf[off + 1] == b'I' {
+        let len = buf[off + 12] as usize;
+        let start = off + 13;
+        out.push(Frame {
+            cmd: buf[off + 10],
+            flag: buf[off + 11],
+            data: &buf[start..(start + len).min(end)],
+        });
+        off = start + len;
     }
-    let start = off + 3;
-    let end = (start + buf[off + 2] as usize).min(buf.len());
-    Some(&buf[start..end])
+    out
+}
+
+/// Payload of the ACK to `cmd_id`, if `buf` carries one. Matching the ACK
+/// flag skips the unsolicited event frames the headset also sends.
+pub fn parse_reply(buf: &[u8], cmd_id: u8) -> Option<&[u8]> {
+    frames(buf)
+        .into_iter()
+        .find(|f| f.cmd == cmd_id && f.flag == FLAG_ACK)
+        .map(|f| f.data)
+}
+
+/// Dongle firmware version ("2.4.1.0") from the reply to get_dongle_firmware().
+pub fn parse_dongle_firmware(buf: &[u8]) -> Option<String> {
+    let f = frames(buf)
+        .into_iter()
+        .find(|f| f.cmd == CMD_DONGLE_FIRMWARE && f.flag == 0xC2 && f.data.len() >= 4)?;
+    Some(f.data[..4].iter().map(|b| b.to_string()).collect::<Vec<_>>().join("."))
+}
+
+/// Wire level for Synapse's 0-100 sidetone slider.
+pub fn sidetone_level(percent: u8) -> u8 {
+    ((percent.min(100) as u16 * SIDETONE_MAX as u16 + 50) / 100) as u8
 }
 
 /// EQ presets. Game/Music/Movie and the five esports presets are stored on the
@@ -220,15 +270,17 @@ impl EqPreset {
         }
     }
 
-    /// Reference curve for display (Synapse 4 defaults for this headset).
-    /// The headset plays its own stored copy; Custom has no fixed curve.
+    /// Preset curve. Esports curves are the ones Synapse writes into each
+    /// preset's slot; Game/Music/Movie are reference curves for display (the
+    /// headset plays its built-in copy; Movie matches Synapse's own).
+    /// Custom has no fixed curve.
     pub fn curve(self) -> Option<[i8; EQ_BANDS]> {
         Some(match self {
-            Self::Game => [-5, -5, -4, -3, -2, 2, 4, 4, 3, 2],
-            Self::Movie => [4, 4, 3, -4, -5, -1, 3, 5, 3, 2],
-            Self::Music => [1, 1, 1, 0, 0, 2, 3, 3, 2, 1],
+            Self::Game => [-3, -3, -4, 0, 5, 5, 4, 1, 0, -1],
+            Self::Movie => [4, 4, 3, 0, -3, -1, 3, 5, 2, 1],
+            Self::Music => [2, 2, 1, 1, 2, 3, 3, 3, 1, 0],
             Self::ApexLegends => [-1, 0, 0, 0, -1, 0, 2, 3, 2, 3],
-            Self::CallOfDuty => [2, 0, 5, 0, 0, 0, -4, -4, -4, -4],
+            Self::CallOfDuty => [-2, 0, 3, 3, 3, 3, 0, 0, 0, 0],
             Self::Csgo => [-5, -4, 3, 5, 3, -2, 1, 5, 4, -4],
             Self::Fortnite => [-4, 5, 5, 3, -2, 3, 4, 4, -1, 4],
             Self::Valorant => [0, 0, 0, 0, 0, 1, 4, 4, 4, -3],
@@ -263,7 +315,7 @@ mod tests {
     fn matches_legacy_frames() {
         assert_eq!(set_remote_mode(true), legacy(0x07, 0x0E, 0x02, 0xE1, &[1]));
         assert_eq!(set_remote_mode(false), legacy(0x07, 0x0E, 0x02, 0xE1, &[0]));
-        assert_eq!(set_config(), legacy(0x0B, 0x08, 0x06, 0x01, &[0xC2, 0x03, 0xF8, 0x5F, 0x04]));
+        assert_eq!(get_dongle_firmware(), legacy(0x0B, 0x08, 0x06, 0x01, &[0xC2, 0x03, 0xF8, 0x5F, 0x04]));
         // Legacy "setVolume(255)" is really the Custom preset selector.
         assert_eq!(set_preset(EqPreset::Custom), legacy(0x09, 0x08, 0x04, 0x93, &[0x00, 0x01, 0xFF]));
         // Legacy "setEnhancement(true)" is the classic-family flag.
@@ -277,18 +329,57 @@ mod tests {
         assert_eq!(query(CMD_BATTERY), legacy(0x08, 0x08, 0x03, 0x21, &[]));
     }
 
+    /// Pad a captured report to 64 bytes.
+    fn report(bytes: &[u8]) -> Vec<u8> {
+        let mut v = bytes.to_vec();
+        v.resize(64, 0);
+        v
+    }
+
+    // Input reports copied from a Synapse 4 log of this headset.
+
     #[test]
-    fn parses_replies() {
-        let mut buf = [0u8; 64];
-        buf[0] = 0x02;
-        buf[12] = CMD_BATTERY;
-        buf[13] = 0x01;
-        buf[14] = 1;
-        buf[15] = 70;
-        assert_eq!(parse_reply(&buf, CMD_BATTERY), Some(&[70u8][..]));
-        assert_eq!(parse_reply(&buf, CMD_CHARGING), None);
-        buf[13] = 0x00; // not an ACK: telemetry
-        assert_eq!(parse_reply(&buf, CMD_BATTERY), None);
+    fn parses_captured_replies() {
+        // getBatteryStatus -> 55%. Trailing bytes are stale buffer contents.
+        let battery = report(&[
+            0x02, 0x0E, 0x50, 0x49, 0x08, 0xD5, 0xCD, 0x1D, 0x00, 0x00, 0x04, 0x00, 0x21, 0x01,
+            0x01, 0x37, 0x49, 0x01, 0xC0, 0x22,
+        ]);
+        assert_eq!(parse_reply(&battery, CMD_BATTERY), Some(&[55u8][..]));
+        assert_eq!(parse_reply(&battery, CMD_CHARGING), None);
+
+        // The transport-level echo that precedes each reply is not an ACK.
+        let echo = report(&[
+            0x02, 0x0D, 0x50, 0x49, 0x01, 0xC0, 0xFE, 0x5B, 0xEF, 0x00, 0x03, 0x00, 0x0E, 0x80,
+        ]);
+        assert!(frames(&echo).iter().all(|f| f.flag != FLAG_ACK));
+
+        // Set Not Disturb ACK packed together with a DND-changed event.
+        let dnd = report(&[
+            2, 28, 80, 73, 8, 212, 12, 125, 3, 0, 4, 0, 167, 1, 1, 0, 80, 73, 8, 213, 12, 125, 3,
+            0, 4, 0, 39, 2, 1, 1,
+        ]);
+        let f = frames(&dnd);
+        assert_eq!(f.len(), 2);
+        assert_eq!((f[1].cmd, f[1].flag, f[1].data), (CMD_DND_GET, FLAG_EVENT, &[1u8][..]));
+        assert_eq!(parse_reply(&dnd, CMD_DND), Some(&[0u8][..]));
+        assert_eq!(parse_reply(&dnd, CMD_DND_GET), None); // event, not an ACK
+
+        // Get Dongle Firmware Version -> 2.4.1.0
+        let fw = report(&[
+            0x02, 0x11, 0x50, 0x49, 0x08, 0xD6, 0x87, 0x5D, 0xEF, 0x00, 0x07, 0x00, 0x01, 0xC2,
+            0x04, 0x02, 0x04, 0x01, 0x00,
+        ]);
+        assert_eq!(parse_dongle_firmware(&fw).as_deref(), Some("2.4.1.0"));
+    }
+
+    #[test]
+    fn sidetone_matches_synapse() {
+        // Synapse sent 7 for 50 and 4 for 31.
+        assert_eq!(sidetone_level(50), 7);
+        assert_eq!(sidetone_level(31), 4);
+        assert_eq!(sidetone_level(100), SIDETONE_MAX);
+        assert_eq!(sidetone_level(0), 0);
     }
 
     #[test]

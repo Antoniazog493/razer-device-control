@@ -7,7 +7,7 @@ use base64::Engine;
 use serde_json::Value;
 
 use crate::config::{EqMode, Profile};
-use crate::protocol::{self, EqPreset, EQ_BANDS};
+use crate::protocol::{EqPreset, EQ_BANDS};
 
 pub fn import_file(path: &std::path::Path) -> Result<Vec<Profile>, String> {
     let text = std::fs::read_to_string(path).map_err(|e| format!("No se pudo leer el archivo: {e}"))?;
@@ -92,8 +92,7 @@ fn profile_from_payload(name: &str, p: &Value) -> Profile {
     let st = &p["micSideTone"];
     prof.sidetone_enabled = st["isEnabled"].as_bool().unwrap_or(false);
     if let Some(v) = st["value"].as_f64() {
-        // Synapse shows 0-100, the headset takes 0-10.
-        prof.sidetone_level = (v / 10.0).round().clamp(1.0, protocol::SIDETONE_MAX as f64) as u8;
+        prof.sidetone_volume = v.round().clamp(1.0, 100.0) as u8;
     }
 
     prof.dnd = p["notDisturb"]["isEnabled"].as_bool().unwrap_or(false);
@@ -141,7 +140,7 @@ mod tests {
         assert_eq!(p.esports_preset, EqPreset::Valorant);
         assert_eq!(p.custom_eq, [3, 4, 3, 0, 0, 2, 3, 4, 4, 3]);
         assert!(p.sidetone_enabled);
-        assert_eq!(p.sidetone_level, 6);
+        assert_eq!(p.sidetone_volume, 60);
         assert!(p.dnd);
         assert!(p.auto_off_enabled);
         assert_eq!(p.auto_off_minutes, 30);
