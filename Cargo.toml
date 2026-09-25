@@ -1,13 +1,34 @@
 [package]
 name = "rzr"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
-description = "Razer BlackShark V2 Pro audio initializer — replaces Razer Synapse for audio config"
+description = "Razer BlackShark V2 Pro control panel — replaces Razer Synapse for headset settings"
 license = "MIT"
 
 [dependencies]
+eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "x11"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+base64 = "0.22"
+
+[target.'cfg(windows)'.dependencies]
 hidapi = "2.6"
 winreg = "0.55"
+rfd = { version = "0.15", default-features = false }
+windows = { version = "0.62", features = [
+    "Win32_Devices_FunctionDiscovery",
+    "Win32_Foundation",
+    "Win32_Media_Audio",
+    "Win32_Media_Audio_Endpoints",
+    "Win32_System_Com",
+    "Win32_System_Com_StructuredStorage",
+    "Win32_System_Variant",
+    "Win32_UI_Shell_PropertiesSystem",
+] }
+
+# Non-Windows builds exist for development; pure-Rust hidraw backend.
+[target.'cfg(not(windows))'.dependencies]
+hidapi = { version = "2.6", default-features = false, features = ["linux-native-basic-udev"] }
 
 [profile.release]
 opt-level = "s"

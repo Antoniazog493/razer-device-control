@@ -1,53 +1,49 @@
-mod audio;
+// GUI-subsystem on Windows: no console window flashes on double-click or at
+// login. CLI commands attach to the parent console instead.
+#![cfg_attr(windows, windows_subsystem = "windows")]
+
+mod config;
 mod device;
+mod gui;
+mod instance;
 mod protocol;
 mod registry;
+mod synapse;
+mod winaudio;
+mod worker;
 
 use std::io::{self, Write};
 use std::thread;
 use std::time::Duration;
 
+use config::Config;
+use worker::Target;
+
 #[cfg(windows)]
 extern "system" {
-    fn FreeConsole() -> i32;
-    fn CreateMutexW(attrs: *mut u8, initial_owner: i32, name: *const u16) -> *mut u8;
-    fn GetLastError() -> u32;
+    fn AttachConsole(process_id: u32) -> i32;
 }
 
-const _ERROR_ALREADY_EXISTS: u32 = 183;
-
-/// Ensure only one instance of rzr --watch is running.
-/// Returns false if another instance already holds the mutex.
+/// Reuse the console of the shell that launched us, so CLI output shows up.
 #[cfg(windows)]
-fn acquire_single_instance() -> bool {
-    let name: Vec<u16> = "Global\\rzr_blackshark_v2_pro\0"
-        .encode_utf16()
-        .collect();
+fn attach_console() {
+    const ATTACH_PARENT_PROCESS: u32 = u32::MAX;
     unsafe {
-        let handle = CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr());
-        if handle.is_null() || GetLastError() == _ERROR_ALREADY_EXISTS {
-            return false;
-        }
+        AttachConsole(ATTACH_PARENT_PROCESS);
     }
-    // Leak the handle — lives for process lifetime
-    true
 }
 
 #[cfg(not(windows))]
-fn acquire_single_instance() -> bool {
-    true
-}
+fn attach_console() {}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let silent = args.iter().any(|a| a == "--silent" || a == "-s");
+    let has = |flags: &[&str]| args.iter().any(|a| flags.contains(&a.as_str()));
+    let silent = has(&["--silent", "-s"]);
+    let watch = has(&["--watch", "-w"]);
 
     if silent {
-        // Hide console window on Windows
-        #[cfg(windows)]
-        unsafe { FreeConsole(); }
-
-        if args.iter().any(|a| a == "--watch" || a == "-w") {
+        if watch {
             run_watch(true);
         } else {
             run_silent();
@@ -55,102 +51,82 @@ fn main() {
         return;
     }
 
-    let cmd = args.iter().find(|a| !a.starts_with('-') && *a != &args[0]);
+    let positional: Vec<&str> = args
+        .iter()
+        .skip(1)
+        .filter(|a| !a.starts_with('-'))
+        .map(|s| s.as_str())
+        .collect();
 
-    match cmd.map(|s| s.as_str()) {
-        Some("config") => run_config(),
-        Some("help") => print_help(),
-        Some("watch") => run_watch(false),
-        None => {
-            if args.iter().any(|a| a == "--help" || a == "-h") {
-                print_help();
-            } else if args.iter().any(|a| a == "--watch" || a == "-w") {
-                run_watch(false);
-            } else {
-                run_apply();
-            }
-        }
-        Some(other) => {
-            eprintln!("Unknown command: {other}");
-            eprintln!("Use 'rzr config' to configure, or just 'rzr' to apply settings.");
+    let cmd = positional.first().copied();
+
+    if matches!(cmd, None | Some("config") | Some("gui")) && !watch && !has(&["--help", "-h"]) {
+        if let Err(e) = gui::run(has(&["--demo"])) {
+            attach_console();
+            eprintln!("rzr: could not open the window: {e}");
             std::process::exit(1);
         }
+        return;
+    }
+
+    attach_console();
+    println!();
+    if has(&["--help", "-h"]) || cmd == Some("help") {
+        print_help();
+    } else if watch || cmd == Some("watch") {
+        run_watch(false);
+    } else if cmd == Some("apply") {
+        run_apply();
+    } else if cmd == Some("import") {
+        run_import(positional.get(1).copied());
+    } else {
+        eprintln!("Unknown command: {}", cmd.unwrap_or_default());
+        eprintln!("Use 'rzr help' for usage.");
+        std::process::exit(1);
     }
 }
-
 
 fn print_help() {
-    println!("rzr - Razer BlackShark V2 Pro Audio Initializer");
+    println!("rzr - Razer BlackShark V2 Pro control panel");
     println!();
-    println!("Sends audio configuration (EQ, volume, enhancement) to your headset");
-    println!("via USB HID, replicating what Razer Synapse does on profile switch.");
+    println!("Controls the headset (EQ, mic monitoring, auto power-off, Do Not");
+    println!("Disturb) over USB HID, replacing Razer Synapse.");
     println!();
     println!("Usage:");
-    println!("  rzr              Apply saved settings to headset");
-    println!("  rzr config       Interactive configuration menu");
-    println!("  rzr --watch      Watch for headset and apply on connect");
-    println!("  rzr --silent     Apply silently (no window, for startup)");
-    println!("  rzr --silent --watch  Watch silently (best for startup)");
-    println!("  rzr --help       Show this help");
+    println!("  rzr                    Open the control panel");
+    println!("  rzr apply              Apply the active profile to the headset");
+    println!("  rzr import FILE        Import profiles from a Synapse .synapse4 export");
+    println!("  rzr --watch            Watch for headset and apply on connect");
+    println!("  rzr --silent           Apply silently (no output, for startup)");
+    println!("  rzr --silent --watch   Watch silently (best for startup)");
+    println!("  rzr help               Show this help");
     println!();
-    println!("Settings are stored in the Windows Registry at HKCU\\SOFTWARE\\rzr");
-    println!();
-    println!("Tip: Add rzr.exe to shell:startup to run automatically on login.");
-}
-
-/// Set default audio devices if configured.
-fn apply_audio_defaults(settings: &registry::Settings, silent: bool) {
-    if !settings.default_speaker.is_empty() {
-        if !silent {
-            print!("  Setting default speaker...");
-            io::stdout().flush().ok();
-        }
-        if audio::set_default_device(&settings.default_speaker) {
-            if !silent { println!(" done"); }
-        } else if !silent {
-            println!(" failed");
-        }
-    }
-    if !settings.default_microphone.is_empty() {
-        if !silent {
-            print!("  Setting default microphone...");
-            io::stdout().flush().ok();
-        }
-        if audio::set_default_device(&settings.default_microphone) {
-            if !silent { println!(" done"); }
-        } else if !silent {
-            println!(" failed");
-        }
-    }
+    println!("Settings are stored in {}", Config::path().display());
 }
 
 fn run_silent() {
-    let settings = registry::Settings::load();
-    let dev = match device::Device::open(settings.wait_timeout_ms) {
+    let cfg = Config::load();
+    let dev = match device::Device::open(cfg.wait_timeout_ms) {
         Ok(d) => d,
         Err(_) => std::process::exit(1),
     };
-    let _ = dev.apply_profile(
-        settings.eq_enabled,
-        &settings.eq_bands,
-        settings.volume,
-        settings.enhancement,
-    );
-    apply_audio_defaults(&settings, true);
+    let _ = dev.apply_profile(cfg.profile(), cfg.send_legacy_config);
+    worker::apply_default_devices(&Target::from_config(&cfg));
 }
 
 fn run_watch(silent: bool) {
-    if !acquire_single_instance() {
+    if !instance::acquire_watcher() {
         if !silent {
             eprintln!("rzr: another instance is already running.");
         }
         std::process::exit(0);
     }
 
-    let settings = registry::Settings::load();
     let poll_interval = Duration::from_secs(5);
     let mut was_connected = false;
     let mut applied = false;
+    // Consecutive failed link checks; one dropped reply isn't a disconnect.
+    let mut misses = 0;
 
     if !silent {
         println!("rzr: watching for headset (poll every 5s, Ctrl+C to stop)");
@@ -161,29 +137,35 @@ fn run_watch(silent: bool) {
             Ok(dev) => {
                 let c = dev.is_headset_connected();
                 if c && !applied {
-                    // Headset just connected (or first detection)
+                    // Headset just connected (or first detection).
+                    // Reload so changes made in the GUI are picked up.
+                    let cfg = Config::load();
                     if !silent {
-                        println!("  Headset connected, applying profile...");
+                        println!("  Headset connected, applying profile \"{}\"...", cfg.profile().name);
                     }
-                    let _ = dev.apply_profile(
-                        settings.eq_enabled,
-                        &settings.eq_bands,
-                        settings.volume,
-                        settings.enhancement,
-                    );
+                    let result = dev.apply_profile(cfg.profile(), cfg.send_legacy_config);
                     if !silent {
                         if let Some(batt) = dev.get_battery() {
                             println!("  Battery: {}%", batt);
                         }
-                        println!("  Done!");
+                        match result {
+                            Ok(()) => println!("  Done!"),
+                            Err(e) => println!("  Failed: {e}"),
+                        }
                     }
-                    apply_audio_defaults(&settings, silent);
+                    worker::apply_default_devices(&Target::from_config(&cfg));
                     applied = true;
                 }
                 c
             }
             Err(_) => false,
         };
+
+        misses = if connected { 0 } else { misses + 1 };
+        if was_connected && !connected && misses < 2 {
+            thread::sleep(poll_interval);
+            continue;
+        }
 
         if was_connected && !connected {
             // Headset disconnected — reset so we re-apply on next connect
@@ -199,12 +181,12 @@ fn run_watch(silent: bool) {
 }
 
 fn run_apply() {
-    let settings = registry::Settings::load();
+    let cfg = Config::load();
 
     print!("rzr: waiting for device...");
     io::stdout().flush().ok();
 
-    let dev = match device::Device::open(settings.wait_timeout_ms) {
+    let dev = match device::Device::open(cfg.wait_timeout_ms) {
         Ok(d) => d,
         Err(e) => {
             eprintln!("\nError: {e}");
@@ -214,19 +196,19 @@ fn run_apply() {
 
     println!(" found {}", dev.product);
 
+    if !dev.is_headset_connected() {
+        eprintln!("  Headset is off or out of range.");
+        std::process::exit(1);
+    }
+
     if let Some(batt) = dev.get_battery() {
         println!("  Battery: {}%", batt);
     }
 
-    print!("  Applying profile...");
+    print!("  Applying profile \"{}\"...", cfg.profile().name);
     io::stdout().flush().ok();
 
-    match dev.apply_profile(
-        settings.eq_enabled,
-        &settings.eq_bands,
-        settings.volume,
-        settings.enhancement,
-    ) {
+    match dev.apply_profile(cfg.profile(), cfg.send_legacy_config) {
         Ok(()) => println!(" done!"),
         Err(e) => {
             eprintln!(" failed: {e}");
@@ -234,243 +216,33 @@ fn run_apply() {
         }
     }
 
-    apply_audio_defaults(&settings, false);
+    worker::apply_default_devices(&Target::from_config(&cfg));
 }
 
-fn run_config() {
-    let mut settings = registry::Settings::load();
-
-    // Show battery on entry
-    if let Ok(dev) = device::Device::open(2000) {
-        if let Some(batt) = dev.get_battery() {
-            println!("\n  Device: {}", dev.product);
-            println!("  Battery: {}%", batt);
+fn run_import(path: Option<&str>) {
+    let Some(path) = path else {
+        eprintln!("Usage: rzr import FILE.synapse4");
+        std::process::exit(1);
+    };
+    let profiles = match synapse::import_file(std::path::Path::new(path)) {
+        Ok(p) => p,
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
         }
+    };
+    let mut cfg = Config::load();
+    for mut p in profiles {
+        p.name = cfg.unique_name(&p.name);
+        println!("  Imported profile \"{}\"", p.name);
+        cfg.profiles.push(p);
     }
-
-    loop {
-        println!();
-        println!("rzr - Configuration");
-        println!("===================");
-        println!();
-        println!(
-            "  1. EQ Enabled:     {}",
-            if settings.eq_enabled { "yes" } else { "no" }
-        );
-        println!(
-            "  2. EQ Bands:       [{}]",
-            registry::format_eq_bands(&settings.eq_bands)
-        );
-        println!("  3. Volume:         {}", settings.volume);
-        println!(
-            "  4. Enhancement:    {}",
-            if settings.enhancement { "yes" } else { "no" }
-        );
-        println!("  5. Wait Timeout:   {}ms", settings.wait_timeout_ms);
-        println!();
-        let spk_display = if settings.default_speaker.is_empty() {
-            "disabled".to_string()
-        } else {
-            // Try to find name for stored ID
-            let devs = audio::list_devices("render");
-            devs.iter()
-                .find(|d| d.id == settings.default_speaker)
-                .map(|d| d.name.clone())
-                .unwrap_or_else(|| settings.default_speaker.clone())
-        };
-        let mic_display = if settings.default_microphone.is_empty() {
-            "disabled".to_string()
-        } else {
-            let devs = audio::list_devices("capture");
-            devs.iter()
-                .find(|d| d.id == settings.default_microphone)
-                .map(|d| d.name.clone())
-                .unwrap_or_else(|| settings.default_microphone.clone())
-        };
-        println!("  s. Default Speaker:  {}", spk_display);
-        println!("  m. Default Mic:      {}", mic_display);
-        println!();
-        println!("  Presets:");
-        println!("  6. Load preset: flat");
-        println!("  7. Load preset: game");
-        println!("  8. Load preset: music");
-        println!("  9. Load preset: movie");
-        println!();
-        println!("  a. Apply now (send to headset)");
-        println!("  0. Save & exit");
-        println!("  q. Quit without saving");
-        println!();
-        print!("  Select: ");
-        io::stdout().flush().ok();
-
-        let mut input = String::new();
-        io::stdin().read_line(&mut input).ok();
-        let choice = input.trim();
-
-        match choice {
-            "1" => {
-                settings.eq_enabled = !settings.eq_enabled;
-                println!(
-                    "  EQ {}",
-                    if settings.eq_enabled {
-                        "enabled"
-                    } else {
-                        "disabled"
-                    }
-                );
-            }
-            "2" => {
-                print!("  Enter 10 comma-separated values (-5 to 5): ");
-                io::stdout().flush().ok();
-                let mut buf = String::new();
-                io::stdin().read_line(&mut buf).ok();
-                match registry::parse_eq_bands(buf.trim()) {
-                    Some(bands) => {
-                        settings.eq_bands = bands;
-                        println!("  EQ set to [{}]", registry::format_eq_bands(&bands));
-                    }
-                    None => println!("  Invalid input. Need exactly 10 values."),
-                }
-            }
-            "3" => {
-                print!("  Enter volume (0-255): ");
-                io::stdout().flush().ok();
-                let mut buf = String::new();
-                io::stdin().read_line(&mut buf).ok();
-                match buf.trim().parse::<u32>() {
-                    Ok(v) if v <= 255 => {
-                        settings.volume = v as u8;
-                        println!("  Volume set to {}", v);
-                    }
-                    _ => println!("  Invalid. Enter 0-255."),
-                }
-            }
-            "4" => {
-                settings.enhancement = !settings.enhancement;
-                println!(
-                    "  Enhancement {}",
-                    if settings.enhancement {
-                        "enabled"
-                    } else {
-                        "disabled"
-                    }
-                );
-            }
-            "5" => {
-                print!("  Enter timeout in ms: ");
-                io::stdout().flush().ok();
-                let mut buf = String::new();
-                io::stdin().read_line(&mut buf).ok();
-                match buf.trim().parse::<u32>() {
-                    Ok(v) => {
-                        settings.wait_timeout_ms = v;
-                        println!("  Timeout set to {}ms", v);
-                    }
-                    _ => println!("  Invalid number."),
-                }
-            }
-            "6" => {
-                settings.eq_bands = registry::PRESET_FLAT;
-                println!("  Loaded flat preset");
-            }
-            "7" => {
-                settings.eq_bands = registry::PRESET_GAME;
-                println!("  Loaded game preset");
-            }
-            "8" => {
-                settings.eq_bands = registry::PRESET_MUSIC;
-                println!("  Loaded music preset");
-            }
-            "9" => {
-                settings.eq_bands = registry::PRESET_MOVIE;
-                println!("  Loaded movie preset");
-            }
-            "a" | "A" => {
-                println!("  Connecting to headset...");
-                match device::Device::open(settings.wait_timeout_ms) {
-                    Ok(dev) => {
-                        match dev.apply_profile(
-                            settings.eq_enabled,
-                            &settings.eq_bands,
-                            settings.volume,
-                            settings.enhancement,
-                        ) {
-                            Ok(()) => println!("  Applied successfully!"),
-                            Err(e) => println!("  Failed: {e}"),
-                        }
-                    }
-                    Err(e) => println!("  {e}"),
-                }
-                apply_audio_defaults(&settings, false);
-            }
-            "s" | "S" => {
-                let devices = audio::list_devices("render");
-                if devices.is_empty() {
-                    println!("  No speakers found.");
-                } else {
-                    println!("  Available speakers:");
-                    println!("    0. Disable (don't change default)");
-                    for (i, d) in devices.iter().enumerate() {
-                        let marker = if d.is_default { " [current default]" } else { "" };
-                        println!("    {}. {}{}", i + 1, d.name, marker);
-                    }
-                    print!("  Select: ");
-                    io::stdout().flush().ok();
-                    let mut buf = String::new();
-                    io::stdin().read_line(&mut buf).ok();
-                    match buf.trim().parse::<usize>() {
-                        Ok(0) => {
-                            settings.default_speaker = String::new();
-                            println!("  Default speaker override disabled.");
-                        }
-                        Ok(n) if n <= devices.len() => {
-                            settings.default_speaker = devices[n - 1].id.clone();
-                            println!("  Will set default to: {}", devices[n - 1].name);
-                        }
-                        _ => println!("  Invalid selection."),
-                    }
-                }
-            }
-            "m" | "M" => {
-                let devices = audio::list_devices("capture");
-                if devices.is_empty() {
-                    println!("  No microphones found.");
-                } else {
-                    println!("  Available microphones:");
-                    println!("    0. Disable (don't change default)");
-                    for (i, d) in devices.iter().enumerate() {
-                        let marker = if d.is_default { " [current default]" } else { "" };
-                        println!("    {}. {}{}", i + 1, d.name, marker);
-                    }
-                    print!("  Select: ");
-                    io::stdout().flush().ok();
-                    let mut buf = String::new();
-                    io::stdin().read_line(&mut buf).ok();
-                    match buf.trim().parse::<usize>() {
-                        Ok(0) => {
-                            settings.default_microphone = String::new();
-                            println!("  Default mic override disabled.");
-                        }
-                        Ok(n) if n <= devices.len() => {
-                            settings.default_microphone = devices[n - 1].id.clone();
-                            println!("  Will set default to: {}", devices[n - 1].name);
-                        }
-                        _ => println!("  Invalid selection."),
-                    }
-                }
-            }
-            "0" => {
-                match settings.save() {
-                    Ok(()) => println!("  Settings saved to registry."),
-                    Err(e) => eprintln!("  Error saving: {e}"),
-                }
-                break;
-            }
-            "q" | "Q" => {
-                println!("  Exiting without saving.");
-                break;
-            }
-            _ => println!("  Invalid option."),
+    cfg.active = cfg.profiles.len() - 1;
+    match cfg.save() {
+        Ok(()) => println!("  Saved. Active profile: \"{}\"", cfg.profile().name),
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
         }
     }
 }

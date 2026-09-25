@@ -1,0 +1,27 @@
+name: Build
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Update Rust
+        run: rustup update stable && rustup default stable
+
+      - name: Test
+        run: cargo test
+
+      - name: Build
+        run: cargo build --release
+
+      - name: Upload rzr.exe
+        uses: actions/upload-artifact@v4
+        with:
+          name: rzr-windows
+          path: target/release/rzr.exe

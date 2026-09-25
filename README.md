@@ -1,149 +1,133 @@
 # rzr
 
-Tiny portable tool that fixes audio quality on the **Razer BlackShark V2 Pro** wireless headset without needing Razer Synapse.
+Panel de control liviano para los audífonos **Razer BlackShark V2 Pro** (versión 2.4 GHz + Bluetooth, dongle `1532:0555`) que **reemplaza a Razer Synapse**. Es un solo `.exe` portátil de ~6 MB, sin instalador ni servicios en segundo plano.
 
-<img width="479" height="497" alt="image" src="https://github.com/user-attachments/assets/d77e0d6b-d910-46f5-be87-72de9e18a1c0" />
+![Pestaña Sonido](docs/sonido.png)
 
+![Ecualizador](docs/ecualizador.png)
 
-## The Problem
+![Micrófono](docs/microfono.png)
 
-When you connect your BlackShark V2 Pro and switch to a custom profile, the audio sounds quiet and flat. Starting Razer Synapse and switching profiles magically fixes it — audio becomes louder, clearer, and the EQ actually works.
+## El problema
 
-This happens because the headset's onboard presets are basic factory defaults. Synapse pushes the real audio configuration (EQ bands, volume gain, DSP enhancement) to the headset over USB HID every time you switch profiles. Without Synapse, those commands never get sent.
+Al conectar los BlackShark V2 Pro sin Synapse, el audio suena bajo y plano: los presets integrados del headset son los de fábrica. Synapse envía la configuración real (preset del ecualizador, curva personalizada, etc.) por USB HID cada vez que cambias de perfil. Sin Synapse, esos comandos nunca llegan.
 
-**rzr** sends the exact same USB commands, in a 201KB exe with zero dependencies.
+**rzr** envía exactamente los mismos comandos y además te da una interfaz como la de Synapse para configurar todo a tu gusto.
 
-## Usage
+## Qué puedes controlar
 
-```
-rzr              # Apply saved audio profile to headset
-rzr config       # Interactive configuration menu
-rzr --silent     # Apply silently (no window, perfect for startup)
-rzr --help       # Show help
-```
+| Función | Dónde vive | Estado |
+|---|---|---|
+| Ecualizador: presets Juego / Película / Música | Headset | ✅ |
+| Ecualizador: presets Esports (Apex, CoD, CS2, Fortnite, Valorant) | Headset | ✅ |
+| Ecualizador personalizado de 10 bandas (−5 a +5 dB) | Headset | ✅ |
+| Monitoreo de micrófono (sidetone) y su nivel | Headset | ✅ |
+| Apagado automático (15–60 min) | Headset | ✅ |
+| No molestar (bloquear llamadas por Bluetooth) | Headset | ✅ |
+| Batería, carga, estado del botón de silencio, firmware, serie | Headset (lectura) | ✅ |
+| Volumen de salida y del micrófono, silenciar | Windows | ✅ |
+| Dispositivo de salida/entrada predeterminado al conectar | Windows | ✅ |
+| Varios perfiles, importar perfiles de Synapse (`.synapse4`) | rzr | ✅ |
+| Iniciar con Windows y aplicar el perfil al conectar/reconectar | rzr | ✅ |
+| Bass Boost, Normalización de sonido, Claridad de voz, THX Spatial Audio | Software de Synapse en el PC | ❌ ver abajo |
+| EQ de micrófono, normalización, claridad vocal, reducción de ruido, puerta de voz | Software de Synapse en el PC | ❌ ver abajo |
 
-### First Run
+### ¿Por qué faltan algunas funciones de Synapse?
 
-Just run `rzr.exe`. It uses sensible defaults (custom EQ, max volume, enhancement on). Settings are saved to the Windows Registry at `HKCU\SOFTWARE\rzr`.
+Esas mejoras **no las hace el headset**. Synapse procesa el audio en tu PC con su propio driver/efecto de audio. El driver de OpenRazer, verificado con este mismo headset, confirma que el comando de "mejora" (`0x9D`) no tiene ningún efecto en el dispositivo. Por eso rzr no puede activarlas enviando comandos por USB. Para tenerlas sin Synapse habría que procesar el audio en el PC, por ejemplo con [Equalizer APO](https://sourceforge.net/projects/equalizerapo/) (bass boost, EQ de micrófono) o NVIDIA Broadcast / RNNoise (reducción de ruido).
 
-### Configuration
+## Descarga
 
-Run `rzr config` to customize:
+- **Compilado automáticamente:** en la pestaña **Actions** del repositorio, abre la última ejecución de *Build* y descarga el artefacto `rzr-windows` (contiene `rzr.exe`).
+- **Compilarlo tú:** instala [Rust](https://rustup.rs) (1.95 o superior) y ejecuta `cargo build --release`. El ejecutable queda en `target/release/rzr.exe`.
 
-```
-rzr - Configuration
-===================
+## Uso
 
-  1. EQ Enabled:     yes
-  2. EQ Bands:       [1,-2,1,-3,1,-3,-5,2,2,3]
-  3. Volume:         255
-  4. Enhancement:    yes
-  5. Wait Timeout:   5000ms
+Haz **doble clic en `rzr.exe`** y se abre el panel. Cada cambio se guarda y se envía al headset al instante. Los cambios de sliders y del ecualizador se envían al soltar.
 
-  Presets:
-  6. Load preset: flat
-  7. Load preset: game
-  8. Load preset: music
-  9. Load preset: movie
+- **Perfiles:** el menú `•••` junto a *PERFIL* permite crear, duplicar, renombrar, eliminar e importar perfiles.
+- **Importar de Synapse:** exporta tu perfil desde Synapse (archivo `.synapse4`) y usa *Importar de Synapse…* o **arrástralo a la ventana**. Se importan el ecualizador, el sidetone, el apagado automático y No molestar.
+- **Iniciar con Windows:** actívalo en *AJUSTES*. rzr quedará en segundo plano, sin ventana, y aplicará tu perfil cada vez que el headset se conecte o reconecte.
+- **Botón EQ del headset:** si cambias de preset con el botón físico, el panel lo detecta y actualiza la selección.
 
-  a. Apply now (send to headset)
-  0. Save & exit
-  q. Quit without saving
-```
-
-### Auto-Start on Login
-
-The best way to run rzr is with `--silent --watch`. This runs invisibly in the background, polls the dongle every 5 seconds, and automatically applies your profile whenever the headset connects or reconnects. A global mutex prevents duplicate instances.
-
-**Option A: Task Scheduler (recommended)**
-
-1. Open Task Scheduler (`taskschd.msc`)
-2. Create Basic Task → name it `rzr`
-3. Trigger: "When I log on"
-4. Action: Start a program → browse to `rzr.exe`, add arguments: `--silent --watch`
-5. Finish, then edit the task: check "Run whether user is logged on or not" is unchecked, and uncheck "Stop the task if it runs longer than"
-
-**Option B: Startup folder**
-
-1. Press Win+R, type `shell:startup`
-2. Create a shortcut to `rzr.exe --silent --watch`
-
-## How It Works
-
-Through reverse engineering Razer Synapse 4, we discovered the exact USB HID commands sent to the headset's wireless dongle when switching audio profiles.
-
-### Protocol
-
-The BlackShark V2 Pro dongle exposes a vendor-defined HID endpoint on USB Interface 3 (Usage Page `0xFF00`). Synapse communicates via 64-byte interrupt OUT transfers using what Razer internally calls the "Audio MXIC" protocol:
+### Línea de comandos
 
 ```
-Byte 0:    0x02        Report type
-Byte 1:    0x80        Direction (output)
-Byte 2:    total_len   Total payload length
-Byte 5-6:  0x50 0x41   "PA" (Protocol Audio)
-Byte 7:    inner_len   Inner data length
-Byte 9:    cmd_type    Command type (2=set, 3=get, 4=set+ack, 6=config, 13=bulk)
-Byte 10:   cmd_id      Command identifier
-Byte 11+:  params      Command-specific parameters
+rzr                    Abre el panel
+rzr apply              Aplica el perfil activo al headset
+rzr import ARCHIVO     Importa perfiles de un .synapse4
+rzr --watch            Vigila el headset y aplica el perfil al conectar
+rzr --silent --watch   Lo mismo, en segundo plano sin salida (para el inicio)
+rzr help               Ayuda
 ```
 
-### Commands Sent
+La configuración se guarda en `%APPDATA%\rzr\config.json`. La primera vez, rzr migra la configuración de versiones anteriores (`HKCU\SOFTWARE\rzr`).
 
-When you switch profiles in Synapse, it sends this exact sequence:
+## Cómo funciona
 
-| Step | Command | ID | Description |
-|------|---------|----|-------------|
-| 1 | SET_CONFIG | `0x06/0x01` | Configures the audio DSP pipeline |
-| 2 | setSpeakerPresetEQ | `0x04/0x9E` | Enables the EQ processing engine |
-| 3 | setVolume | `0x04/0x93` | Sets internal DSP gain (0-255) |
-| 4 | setEnhancement | `0x04/0x9D` | Enables audio enhancement |
-| 5 | SET_EQ_BANDS | `0x0D/0x95` | Pushes 10-band EQ (signed bytes) |
-
-Each command is preceded by a `setRemoteMode` (`0x02/0xE1`) call that toggles between software and device control. The sequence is sent twice for reliability (matching Synapse's behavior).
-
-### EQ Presets
-
-| Preset | Bands |
-|--------|-------|
-| flat | `0,0,0,0,0,0,0,0,0,0` |
-| game | `-3,-3,-4,0,5,5,4,1,0,-1` |
-| music | `2,2,1,1,2,3,3,3,1,0` |
-| movie | `4,4,3,0,-3,-1,3,5,2,1` |
-
-## Building
+El dongle expone un endpoint HID propietario (interfaz USB 3, Usage Page `0xFF00`). Se usan reportes de 64 bytes con el protocolo "Audio MXIC" ("PA"):
 
 ```
-cargo build --release
+[0]  0x02       report id
+[1]  0x80       dirección (host → dispositivo)
+[2]  total_len  8 + largo de datos
+[5]  0x50 'P'   [6] 0x41 'A'
+[7]  inner_len  0x08 (0x0E en el frame de modo remoto)
+[9]  cmd_type   0x02 remoto, 0x03 lectura, 0x04 escritura, 0x0D EQ
+[10] cmd_id
+[11] flag       0 en una petición
+[12] data_len
+[13] datos...
 ```
 
-The binary is at `target/release/rzr.exe` (~200KB, statically linked).
+Las respuestas repiten el sub-frame desplazado: `[12]` = id del comando, `[13]` = `0x01` (ACK), `[14]` = largo, `[15..]` = datos.
 
-### Dependencies
+### Comandos
 
-- [hidapi](https://crates.io/crates/hidapi) — USB HID communication
-- [winreg](https://crates.io/crates/winreg) — Windows Registry access
+| Función | Escritura | Lectura | Datos |
+|---|---|---|---|
+| Modo remoto (antes de cada secuencia) | `02/E1` | — | 1 = software, 0 = headset (en el byte flag) |
+| Selector de preset EQ | `04/93` | `03/13` | `07` Juego, `08` Música, `09` Película, `FF` Personalizado, `FA`–`FE` Esports |
+| Familia del preset | `04/9D` | — | 1 = clásico, 2 = esports |
+| Curva EQ personalizada | `0D/95` | `03/15` | 10 bytes con signo (dB) |
+| Sidetone on/off | `04/98` | `03/18` | 0/1 |
+| Nivel de sidetone | `04/99` | `03/19` | 1–10 |
+| No molestar | `04/A7` | `03/27` | 0/1 |
+| Apagado automático | `04/AC` | `03/2C` | minutos (15–60), 0 = nunca |
+| Enlace inalámbrico | — | `03/20` | 1 = headset conectado |
+| Batería / carga | — | `03/21` / `03/2A` | 0–100 / ≠0 = cargando |
+| Botón de silencio | — | `03/55` | 1 = silenciado |
+| Firmware / serie | — | `03/02` / `03/00` | |
+| SET_CONFIG de Synapse | `06/01` | — | `C2 03 F8 5F 04` |
 
-## Reverse Engineering Process
+> **Corrección respecto a la versión anterior:** el comando `0x93` que antes se llamaba "setVolume" es en realidad el **selector de preset** (`255` = `0xFF` = Personalizado, por eso funcionaba), y `0x9D` ("setEnhancement") solo indica la familia del preset.
 
-This tool was built by reverse engineering Razer Synapse 4:
+### Peculiaridades del firmware
 
-1. **Extracted the Electron app** (`app.asar`) to find the JavaScript source code for device communication
-2. **Analyzed Synapse logs** at `%LOCALAPPDATA%\Razer\RazerAppEngine\User Data\Logs\` which contain every HID command with full byte dumps
-3. **Captured USB traffic** with USBPcap while Synapse initialized the headset
-4. **Decoded the MXIC protocol** by correlating log entries (`AudioMxicDevice.sendCommandOut()`) with USB packets
-5. **Identified the key insight**: audio quality isn't controlled by "device mode" — it's the EQ, volume gain, and enhancement commands pushed during profile switches
+- El enlace 2.4 GHz se duerme tras ~0,3 s sin tráfico y descarta el primer frame que recibe. Cada secuencia empieza con un frame de modo remoto "de sacrificio".
+- Un cambio de preset que cruza de familia (clásico ↔ esports) solo cambia la familia. rzr lee el preset activo y reintenta hasta confirmarlo.
+- El headset guarda una curva `0x95` en el preset que esté activo. rzr confirma que Personalizado está activo antes de escribirla. Luego reenvía el selector para que la curva nueva se escuche de inmediato.
 
-### Device Info
+## Código
 
-| Property | Value |
-|----------|-------|
-| Vendor ID | `0x1532` (Razer) |
-| Product ID | `0x0555` |
-| USB Interface | 3 |
-| HID Usage Page | `0xFF00` (vendor-defined) |
-| HID Usage | `0x01` |
-| Protocol | Audio MXIC (64-byte interrupt transfers) |
+| Archivo | Contenido |
+|---|---|
+| `src/protocol.rs` | Construcción de frames, tabla de comandos, presets |
+| `src/device.rs` | Comunicación HID y secuencias de escritura verificadas |
+| `src/config.rs` | Perfiles y configuración (JSON) |
+| `src/synapse.rs` | Importador de `.synapse4` |
+| `src/winaudio.rs` | Volumen, silencio y dispositivo predeterminado de Windows |
+| `src/worker.rs` | Hilos en segundo plano (headset y audio) para la interfaz |
+| `src/gui/` | Interfaz (egui) con estilo Synapse |
+| `src/registry.rs` | Migración del registro e inicio con Windows |
 
-## License
+`rzr --demo` abre el panel con un headset simulado, útil para probar la interfaz sin el dispositivo.
+
+## Créditos
+
+- Protocolo original por ingeniería inversa de Synapse 4: [Ashesh3/razer-device-control](https://github.com/Ashesh3/razer-device-control).
+- Tabla de comandos y secuencias verificadas en hardware: driver de OpenRazer para este headset ([openrazer/openrazer#2862](https://github.com/openrazer/openrazer/pull/2862)).
+
+## Licencia
 
 MIT
