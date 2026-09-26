@@ -48,7 +48,7 @@ Todas las de [REGLAS.md](REGLAS.md) siguen valiendo. Además:
 
 El detalle y las fuentes están en [HALLAZGOS.md › THX](HALLAZGOS.md#thx-spatial-audio).
 
-- **Dónde está el estado de THX:** es un JSON en `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{id}\Properties`, valor `{d5e8f0ab-4de6-4d91-ab21-68868dda6a4a},6`. El `{id}` es la salida "Speakers (Razer BlackShark V2 Pro)"; en esta PC es `{68854153-5b36-4efa-b61a-6ffb850dd6fa}`.
+- **Dónde está el estado de THX:** es un JSON en `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{id}\Properties`, valor `{d5e8f0ab-4de6-4d91-ab21-68868dda6a4a},6`. El `{id}` es la salida "Speakers (Razer BlackShark V2 Pro)"; en esta PC era `{68854153-5b36-4efa-b61a-6ffb850dd6fa}` y, desde que se reinstaló THX sin Synapse y se reinició (2026-09-26), es `{2862847b-9b22-4ce6-a3c5-3889aacac7eb}`. rzr no lo fija: lo busca cada vez.
   - El valor `,7` guarda lo mismo en protobuf.
   - Hay copias por preset de THX en `HKCU\Software\THX\SpatialAudio\UserState`.
 - **Campos del JSON:**
@@ -65,7 +65,7 @@ El detalle y las fuentes están en [HALLAZGOS.md › THX](HALLAZGOS.md#thx-spati
   `sequenceNumber` sube en cada cambio.
 - **Cómo se cambian los ajustes:** los guarda el **servicio de THX** (`VSSrv`, `C:\Windows\System32\VSSrv.exe`, corre como `LocalSystem` y sigue activo sin Synapse). Tiene dos entradas:
   - **COM** (`VSSrv.CVSSrvTHXSettings`, interfaz `IVSSrvTHXSettings`): lo que usa rzr (`src/thx.rs`, [ADR 0004](adr/0004-thx-por-com.md)). Solo tiene interruptores para Spatial, Bass Boost y Claridad de voz, y el nivel de DRC (que no activa la normalización).
-  - **ZeroMQ** (`tcp://127.0.0.1:49671`, un `ROUTER`; `:49670` es un `PUB`): lo que usa Synapse, con `ThxV3Native` → `thxv3lib`. Permitiría todo, pero el servicio no respondió a los mensajes armados según lo averiguado.
+  - **ZeroMQ** (un `ROUTER` y un `PUB`; los puertos se leen de `HKLM\SOFTWARE\THX\Discovery`; suelen ser `49671` y `49670`, pero cambiaron al reinstalar THX hasta reiniciar): lo que usa Synapse, con `ThxV3Native` → `thxv3lib`. Permitiría todo, pero el servicio no respondió a los mensajes armados según lo averiguado.
 - **Leer `,6` por `IPropertyStore` corta el texto en 259 caracteres;** rzr lo lee con `winreg`.
 - **Los presets de THX no son los del headset:** THX tiene su propia curva por software, que se suma a la del headset. Con Synapse abierto, el botón EQ del headset también cambia la curva de THX.
 
@@ -87,12 +87,13 @@ Hecho el 2026-09-26, segunda sesión (pasos 1 a 4, todos oídos por el usuario c
 
 **La próxima sesión:**
 
-- El paso 5: separar THX de Synapse (instaladores ya respaldados; la normalización ya se oyó, no hace falta Synapse para comparar).
-- Después, la prueba de "Esperando al usuario" 1: mejoras del micrófono tras reiniciar, ya sin Synapse.
+- Paso 5 hecho (tercera sesión): Synapse desinstalado y THX reinstalado solo, con `msiexec` desde el respaldo en `%USERPROFILE%\rzr-respaldo-thx`. Tras reiniciar, rzr funciona igual y el usuario lo oyó todo: efecto, presets y micrófono.
+- Sigue la prueba de "Esperando al usuario" 1: mejoras del micrófono tras reiniciar, ahora sin Synapse que enturbie. Hace falta una mejora encendida en el perfil antes de reiniciar (hoy solo está el EQ "Conferencia", difícil de notar).
+- Después, ESTADO "Sigue" 6: revisar la configuración de audio de Windows.
 
 Notas para los próximos pasos:
 
-- **Separar THX de Synapse:** respaldar primero los instaladores de THX de `C:\ProgramData\Package Cache`, fuera del repo. Desinstalar Synapse lo hace el usuario. Luego reinstalar solo THX y comprobar que el efecto, `VSSrv` y rzr siguen funcionando (salida, EQ y micrófono).
+- **Reinstalar THX sin Synapse** (si hiciera falta de nuevo): `msiexec /i` con los `.msi` de `%USERPROFILE%\rzr-respaldo-thx`, como administrador, y **reiniciar**: hasta entonces la salida del headset no tiene el estado de THX y rzr no lo ve.
 - **Estado de THX en vivo:** para seguir los cambios, lee el JSON `,6` cada 200 ms (salida) y `IVSSrvSettings` cada 300 ms (micrófono), y anota solo lo que cambia. Así se ve si cada cambio del panel llega al servicio sin preguntarle al usuario.
 - **Pruebas de oído con el micrófono:** el sidetone del headset no pasa por las mejoras de THX. Para oírlas, el usuario debe escuchar el micrófono en vivo ("Escuchar este dispositivo" de Windows u otra app).
 - **Tamaños de los arreglos COM:** están en la biblioteca de tipos de `VSSrv.exe` (`LoadTypeLibEx` → `ARRAYDESC`, `cElements` en el desplazamiento 20 en 64 bits). Por ejemplo, `float[31]` para el EQ de salida y `float[10]` para el del micrófono.
