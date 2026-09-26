@@ -105,3 +105,5 @@ A change is done when:
 1. Move the "Unreleased" entries in CHANGELOG.md under the new version and date, and bump `version` in `Cargo.toml`.
 2. Commit, then tag: `git tag v0.2.0 && git push origin v0.2.0`.
 3. The **Release** workflow builds `rzr.exe`, writes its SHA-256 and publishes a draft release with both. Paste the version's CHANGELOG section into the description and publish it.
+
+To publish files built locally instead, create the release on GitHub first (it creates the tag) and attach them; the workflow then sees the release exists and leaves it alone.

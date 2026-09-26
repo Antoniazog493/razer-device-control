@@ -1,5 +1,6 @@
-# Build output
+# Build output and release files
 /target
+/dist/
 
 # The maintainer's own notes and archives; never published
 /local/

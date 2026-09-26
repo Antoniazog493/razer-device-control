@@ -2,7 +2,9 @@
 
 Changes users notice. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) and versions follow [SemVer](https://semver.org/). New changes go under "Unreleased".
 
-## [Unreleased] — 0.2.0
+## [Unreleased]
+
+## [0.2.0] — 2026-09-26
 
 ### Added
 - A control panel: Sound, Enhancements, Microphone, Power and Settings.

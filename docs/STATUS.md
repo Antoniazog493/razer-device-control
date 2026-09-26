@@ -2,7 +2,7 @@
 
 What works, what doesn't and what comes next. **Updated with every change**, in the same commit. The history of how each feature was found and tested is in the git log, [CHANGELOG.md](../CHANGELOG.md) and [RESEARCH.md](RESEARCH.md).
 
-Last update: 2026-09-26 · version 0.2.0 (unreleased)
+Last update: 2026-09-26 · version 0.2.0 (release files built, not yet published)
 
 **Goal:** rzr fully replaces Synapse for the BlackShark V2 Pro, with THX working **without Synapse installed**; then more Razer headsets.
 
@@ -57,12 +57,13 @@ Legend:
 
 ## Next
 
-1. **BlackShark V2 Pro (2020):** collect a diagnostics report and a Synapse capture from a 2020 unit ([NEW-HEADSETS.md](NEW-HEADSETS.md)), then decide whether it speaks the same "PA" protocol or Razer's older 90-byte one.
-2. **Release 0.2.0** with `rzr.exe` on GitHub Releases.
-3. **Check Windows' audio setup:** warn when audio enhancements are off or Windows Sonic is on, and offer to fix it.
-4. **Confirm on hardware** what is 🟡 above.
-5. **Windows' own enhancements without THX** (Bass Boost, Loudness), with the registry keys already captured ([RESEARCH.md](RESEARCH.md#windows-own-enhancements)).
-6. **A lighter native interface** instead of WebView2 (its cache is ~30 MB). Needs an ADR that replaces [0001](adr/0001-web-ui-in-webview2.md).
+1. **Publish 0.2.0** on GitHub Releases (`rzr.exe`, the zip and their SHA-256 are built; see CONTRIBUTING.md › Releasing).
+2. **Keep testing with other headsets.** First the BlackShark V2 Pro (2020): collect a diagnostics report and a Synapse capture from a 2020 unit ([NEW-HEADSETS.md](NEW-HEADSETS.md)), then decide whether it speaks the same "PA" protocol or Razer's older 90-byte one. Then any other Razer headset whose owner sends a report.
+3. **Export profiles:** save one or all profiles to a file (rzr's own format) to back them up, share them or move them to another PC, and import that file back. Today rzr only imports Synapse's `.synapse4`.
+4. **Check Windows' audio setup:** warn when audio enhancements are off or Windows Sonic is on, and offer to fix it.
+5. **Confirm on hardware** what is 🟡 above.
+6. **Windows' own enhancements without THX** (Bass Boost, Loudness), with the registry keys already captured ([RESEARCH.md](RESEARCH.md#windows-own-enhancements)).
+7. **A lighter native interface** instead of WebView2 (its cache is ~30 MB). Needs an ADR that replaces [0001](adr/0001-web-ui-in-webview2.md).
 
 ## Ideas
 
