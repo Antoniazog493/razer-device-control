@@ -35,7 +35,7 @@ Leyenda de verificación:
 |---|---|---|
 | Volumen de Windows | ✅ | |
 | Silencio de Windows | 🟡 | |
-| Elegir el dispositivo predeterminado | 🟡 | SONIDO › SALIDA PREDETERMINADA y MICRÓFONO › ENTRADA PREDETERMINADA muestran el predeterminado actual de Windows y lo cambian solo al elegir otro. Desde el 2026-09-26 rzr **ya no lo cambia al conectar ni al iniciar**: antes guardaba el elegido y lo imponía en cada conexión, y como la entrada tenía el micrófono de la laptop (`C-Media(R) Audio`), el predeterminado volvía a él en cada reinicio. El usuario elige el predeterminado y cambia de audífonos seguido. `debug.log` anota cada cambio (`predeterminado elegido en el panel: …`). Comprobado que el proceso en segundo plano ya no lo toca al arrancar; falta la prueba tras reiniciar. |
+| Elegir el dispositivo predeterminado | ✅ | SONIDO › SALIDA PREDETERMINADA y MICRÓFONO › ENTRADA PREDETERMINADA muestran el predeterminado actual de Windows y lo cambian solo al elegir otro. Desde el 2026-09-26 rzr **ya no lo cambia al conectar ni al iniciar**: antes guardaba el elegido y lo imponía en cada conexión, y como la entrada tenía el micrófono de la laptop (`C-Media(R) Audio`), el predeterminado volvía a él en cada reinicio. El usuario elige el predeterminado y cambia de audífonos seguido. `debug.log` anota cada cambio (`predeterminado elegido en el panel: …`). Comprobado tras reiniciar (2026-09-26): Windows se quedó con el micrófono y la salida del headset que eligió el usuario, y `debug.log` no muestra ningún cambio de rzr. |
 | Perfiles, importar `.synapse4` (archivo o arrastrando) | ✅ | Arrastrar a la ventana funciona. |
 | Iniciar con Windows / proceso en segundo plano | 🟡 | |
 | Panel nuevo (WebView2) | ✅ | Abre bien en Windows 11, aplica el perfil, sliders y curva se mueven bien. Lo que no suena (sidetone, curva) es del headset, no del panel. |
@@ -63,8 +63,7 @@ Leyenda de verificación:
 
 ## Esperando al usuario (en la PC)
 
-1. **Predeterminado tras reiniciar:** elegir los predeterminados (en el panel o en Windows), reiniciar y comprobar que Windows se queda con ellos. Si cambian solos, buscar `predeterminado` en `debug.log`: rzr solo lo anota cuando se elige en el panel, así que si no aparece a esa hora, el cambio no lo hizo rzr.
-2. **Ronda 2 de la prueba guiada** (AJUSTES › DIAGNÓSTICO) y enviar `debug.log`. Ya no es urgente: el EQ que se oye va por THX (ver "Sigue" 1). Sirve para saber si la curva del headset puede funcionar sin THX.
+1. **Ronda 2 de la prueba guiada** (AJUSTES › DIAGNÓSTICO) y enviar `debug.log`. Ya no es urgente: el EQ que se oye va por THX (ver "Sigue" 1). Sirve para saber si la curva del headset puede funcionar sin THX.
 
 ## Sigue (en orden)
 
