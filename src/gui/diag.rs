@@ -5,11 +5,11 @@
 /// Round 1 (on the user's headset) found that a curve written into Custom
 /// is stored and read back exactly, yet not heard, while switching between
 /// the built-in presets is heard. Round 2 tests why.
+///
+/// This is the test's logic only; the page draws it from `view()`.
 
-use eframe::egui::{self, Color32, RichText};
+use serde_json::{json, Value};
 
-use super::theme::*;
-use super::widgets::*;
 use crate::config::EqMethod;
 use crate::protocol::{EqPreset, EQ_BANDS};
 use crate::worker::DiagAction;
@@ -63,6 +63,15 @@ const TESTS: [Test; 4] = [
     },
 ];
 
+const INTRO: &str = "Ronda 2: la curva PERSONALIZADA se guarda en el headset pero no se oye, y los presets de fábrica sí. Estas pruebas buscan por qué.";
+const STEPS: [&str; 5] = [
+    "1. Pon música que conozcas bien (con graves y voces) a un volumen cómodo.",
+    "2. En cada prueba pulsa A y B varias veces y escucha si el sonido cambia.",
+    "3. Responde lo que oyes. Tarda unos 3 minutos.",
+    "Al terminar, rzr usará el método que funcionó y volverá a aplicar tu perfil.",
+    "Mientras tanto se guarda todo en debug.log, por si hay que enviarlo.",
+];
+
 #[derive(Clone, Copy, PartialEq)]
 enum Answer {
     Yes,
@@ -79,30 +88,27 @@ pub struct Outcome {
 }
 
 impl Kind {
-    fn actions(self) -> (&'static str, &'static str, DiagAction, DiagAction) {
+    fn actions(self) -> [(&'static str, DiagAction); 2] {
         match self {
-            Kind::Relatch => ("A · GRAVES", "B · AGUDOS", DiagAction::CurveRelatch(BASS), DiagAction::CurveRelatch(TREBLE)),
-            Kind::EsportsSelect => (
-                "A · APEX LEGENDS",
-                "B · CS2",
-                DiagAction::Select(EqPreset::ApexLegends),
-                DiagAction::Select(EqPreset::Csgo),
-            ),
-            Kind::EsportsCurve => (
-                "A · GRAVES",
-                "B · AGUDOS",
-                DiagAction::SlotCurve(EqPreset::ApexLegends, BASS),
-                DiagAction::SlotCurve(EqPreset::ApexLegends, TREBLE),
-            ),
-            Kind::Loudness => ("A · PLANO", "B · −9 dB", DiagAction::CurveRelatch(FLAT), DiagAction::CurveRelatch(QUIET)),
+            Kind::Relatch => [("A · GRAVES", DiagAction::CurveRelatch(BASS)), ("B · AGUDOS", DiagAction::CurveRelatch(TREBLE))],
+            Kind::EsportsSelect => [
+                ("A · APEX LEGENDS", DiagAction::Select(EqPreset::ApexLegends)),
+                ("B · CS2", DiagAction::Select(EqPreset::Csgo)),
+            ],
+            Kind::EsportsCurve => [
+                ("A · GRAVES", DiagAction::SlotCurve(EqPreset::ApexLegends, BASS)),
+                ("B · AGUDOS", DiagAction::SlotCurve(EqPreset::ApexLegends, TREBLE)),
+            ],
+            Kind::Loudness => [("A · PLANO", DiagAction::CurveRelatch(FLAT)), ("B · −9 dB", DiagAction::CurveRelatch(QUIET))],
         }
     }
 }
 
-pub enum Request {
-    Run { action: DiagAction, method: EqMethod, release: bool },
-    Finish(Outcome),
-    Cancel,
+/// A test step for the device worker.
+pub struct Run {
+    pub action: DiagAction,
+    pub method: EqMethod,
+    pub release: bool,
 }
 
 enum Stage {
@@ -140,20 +146,15 @@ impl Wizard {
         self.waiting = false;
     }
 
-    fn answer(&self, kind: Kind) -> Option<Answer> {
+    fn answer_of(&self, kind: Kind) -> Option<Answer> {
         TESTS.iter().zip(&self.answers).find(|(t, _)| t.kind == kind).and_then(|(_, a)| *a)
     }
 
     /// Switching away and back is the only change that can become the
     /// default method; the esports findings need code changes first.
     fn working_method(&self) -> Option<(EqMethod, bool)> {
-        let heard = |k| self.answer(k) == Some(Answer::Yes);
+        let heard = |k| self.answer_of(k) == Some(Answer::Yes);
         (heard(Kind::Relatch) || heard(Kind::Loudness)).then_some((EqMethod::Relatch, true))
-    }
-
-    fn run(&mut self, out: &mut Vec<Request>, action: DiagAction) {
-        self.waiting = true;
-        out.push(Request::Run { action, method: EqMethod::Verified, release: true });
     }
 
     fn enter_test(&mut self, i: usize) {
@@ -163,15 +164,47 @@ impl Wizard {
         self.readback = None;
     }
 
-    fn next(&mut self) {
-        match self.stage {
-            Stage::Intro => self.enter_test(0),
-            Stage::Test(i) if i + 1 < TESTS.len() => self.enter_test(i + 1),
-            _ => self.stage = Stage::Summary,
+    /// Leave the intro.
+    pub fn start(&mut self) {
+        if matches!(self.stage, Stage::Intro) {
+            self.enter_test(0);
         }
     }
 
-    fn outcome(&self) -> Outcome {
+    /// The user pressed A (0) or B (1). Returns the step to send, unless a
+    /// previous one is still running or the headset can't take it.
+    pub fn press(&mut self, k: usize, can_send: bool) -> Option<Run> {
+        let Stage::Test(i) = self.stage else { return None };
+        if k > 1 || !can_send || self.waiting {
+            return None;
+        }
+        self.tried[k] = true;
+        self.playing = Some(k);
+        self.waiting = true;
+        let action = TESTS[i].kind.actions()[k].1;
+        Some(Run { action, method: EqMethod::Verified, release: true })
+    }
+
+    /// Both A and B were tried and the last one finished.
+    fn ready(&self) -> bool {
+        self.tried[0] && self.tried[1] && !self.waiting
+    }
+
+    /// The user's answer to the current test.
+    pub fn answer(&mut self, heard: bool) {
+        let Stage::Test(i) = self.stage else { return };
+        if !self.ready() {
+            return;
+        }
+        self.answers[i] = Some(if heard { Answer::Yes } else { Answer::No });
+        if i + 1 < TESTS.len() {
+            self.enter_test(i + 1);
+        } else {
+            self.stage = Stage::Summary;
+        }
+    }
+
+    pub fn outcome(&self) -> Outcome {
         let mut summary = vec!["Ronda 2 de la prueba guiada".to_string()];
         for (t, a) in TESTS.iter().zip(&self.answers) {
             let a = match a {
@@ -184,131 +217,79 @@ impl Wizard {
         Outcome { method: self.working_method(), eq_status: None, summary }
     }
 
-    /// Draw the dialog. `connected` = headset linked.
-    pub fn show(&mut self, ctx: &egui::Context, connected: bool, busy: bool) -> Vec<Request> {
-        let mut out = Vec::new();
-        egui::Modal::new(egui::Id::new("diag")).show(ctx, |ui| {
-            ui.set_width(560.0);
-            ui.label(RichText::new("PRUEBA GUIADA DEL ECUALIZADOR").size(16.0).color(GREEN));
-            ui.add_space(6.0);
-            match self.stage {
-                Stage::Intro => self.intro(ui, &mut out),
-                Stage::Test(i) => self.test(ui, i, connected, busy, &mut out),
-                Stage::Summary => self.summary(ui, &mut out),
+    /// What the page shows. `connected` = headset linked, `busy` = the
+    /// device worker is sending something.
+    pub fn view(&self, connected: bool, busy: bool) -> Value {
+        match self.stage {
+            Stage::Intro => json!({ "stage": "intro", "text": INTRO, "steps": STEPS }),
+            Stage::Test(i) => {
+                let t = &TESTS[i];
+                let [a, b] = t.kind.actions();
+                let button = |k: usize, label: &str| json!({ "label": label, "playing": self.playing == Some(k), "tried": self.tried[k] });
+                json!({
+                    "stage": "test",
+                    "title": t.title,
+                    "explain": t.explain,
+                    "buttons": [button(0, a.0), button(1, b.0)],
+                    "waiting": self.waiting || busy,
+                    "connected": connected,
+                    "readback": self.readback,
+                    "ready": self.ready(),
+                })
             }
-        });
-        out
+            Stage::Summary => {
+                let outcome = self.outcome();
+                let esports = self.answer_of(Kind::EsportsCurve) == Some(Answer::Yes);
+                let (text, ok) = match (outcome.method, esports) {
+                    (Some(_), _) => ("Funciona escribir la curva y cambiar de preset. rzr lo hará así a partir de ahora.", true),
+                    (None, true) => (
+                        "La curva solo se oye en un preset Esports. Envíame debug.log: con eso puedo hacer que PERSONALIZADO use ese camino.",
+                        false,
+                    ),
+                    (None, false) => (
+                        "Ninguna prueba cambió el sonido. Envíame el archivo debug.log para seguir investigando.",
+                        false,
+                    ),
+                };
+                json!({
+                    "stage": "summary",
+                    "lines": outcome.summary,
+                    "verdict": text,
+                    "ok": ok,
+                    "eq_status": outcome.eq_status,
+                })
+            }
+        }
     }
+}
 
-    fn intro(&mut self, ui: &mut egui::Ui, out: &mut Vec<Request>) {
-        dim_text(ui, "Ronda 2: la curva PERSONALIZADA se guarda en el headset pero no se oye, y los presets de fábrica sí. Estas pruebas buscan por qué.");
-        ui.add_space(4.0);
-        for line in [
-            "1. Pon música que conozcas bien (con graves y voces) a un volumen cómodo.",
-            "2. En cada prueba pulsa A y B varias veces y escucha si el sonido cambia.",
-            "3. Responde lo que oyes. Tarda unos 3 minutos.",
-            "Al terminar, rzr usará el método que funcionó y volverá a aplicar tu perfil.",
-            "Mientras tanto se guarda todo en debug.log, por si hay que enviarlo.",
-        ] {
-            ui.label(line);
-        }
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            if ui.button(RichText::new("Empezar").size(15.0)).clicked() {
-                self.next();
-            }
-            if ui.button("Cancelar").clicked() {
-                out.push(Request::Cancel);
-            }
-        });
-    }
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-    fn test(&mut self, ui: &mut egui::Ui, i: usize, connected: bool, busy: bool, out: &mut Vec<Request>) {
-        let t = &TESTS[i];
-        ui.label(RichText::new(t.title).size(15.0).strong());
-        dim_text(ui, t.explain);
-        ui.add_space(10.0);
-
-        let (a_label, b_label, a, b) = t.kind.actions();
-        let can_send = connected && !self.waiting && !busy;
-        ui.horizontal(|ui| {
-            for (k, (label, action)) in [(a_label, a), (b_label, b)].into_iter().enumerate() {
-                if preset_button(ui, label, self.playing == Some(k), 200.0).clicked() && can_send {
-                    self.tried[k] = true;
-                    self.playing = Some(k);
-                    self.run(out, action);
-                }
+    #[test]
+    fn answers_need_both_sides_and_pick_relatch() {
+        let mut w = Wizard::new();
+        assert!(w.press(0, true).is_none(), "no step before starting");
+        w.start();
+        assert!(w.press(0, false).is_none(), "nothing sent while disconnected");
+        assert!(w.press(0, true).is_some());
+        assert!(w.press(1, true).is_none(), "one step at a time");
+        w.on_result("ok".into());
+        w.answer(true);
+        assert_eq!(w.view(true, false)["title"], TESTS[0].title, "can't answer before trying B");
+        assert!(w.press(1, true).is_some());
+        w.on_result("ok".into());
+        w.answer(true);
+        assert_eq!(w.view(true, false)["title"], TESTS[1].title);
+        for _ in 1..TESTS.len() {
+            for k in 0..2 {
+                w.press(k, true).unwrap();
+                w.on_result("ok".into());
             }
-            if self.waiting || busy {
-                ui.add(egui::Spinner::new().size(16.0).color(GREEN));
-            }
-        });
-        if !connected {
-            ui.label(RichText::new("El headset no está conectado: enciéndelo para seguir.").color(WARN));
+            w.answer(false);
         }
-        if let Some(text) = &self.readback {
-            ui.add_space(4.0);
-            ui.label(RichText::new(text).monospace().size(11.0).color(TEXT_FAINT));
-        }
-        ui.add_space(10.0);
-
-        let ready = self.tried[0] && self.tried[1] && !self.waiting;
-        if !ready {
-            faint_text(ui, "Prueba A y B al menos una vez cada una para poder responder.");
-        }
-        let choices: &[(&str, Answer)] = &[("Sí, el sonido cambia", Answer::Yes), ("No, suena igual", Answer::No)];
-        ui.horizontal(|ui| {
-            for (label, answer) in choices {
-                if ui.add_enabled(ready, egui::Button::new(*label)).clicked() {
-                    self.answers[i] = Some(*answer);
-                    self.next();
-                }
-            }
-            ui.add_space(12.0);
-            if ui.button("Cancelar prueba").clicked() {
-                out.push(Request::Cancel);
-            }
-        });
-    }
-
-    fn summary(&mut self, ui: &mut egui::Ui, out: &mut Vec<Request>) {
-        let outcome = self.outcome();
-        for line in &outcome.summary {
-            ui.label(RichText::new(line).size(12.5));
-        }
-        ui.add_space(8.0);
-        let esports = self.answer(Kind::EsportsCurve) == Some(Answer::Yes);
-        let (text, color): (String, Color32) = match (outcome.method, esports) {
-            (Some(_), _) => (
-                "Funciona escribir la curva y cambiar de preset. rzr lo hará así a partir de ahora.".into(),
-                GREEN,
-            ),
-            (None, true) => (
-                "La curva solo se oye en un preset Esports. Envíame debug.log: con eso puedo hacer que PERSONALIZADO use ese camino.".into(),
-                WARN,
-            ),
-            (None, false) => (
-                "Ninguna prueba cambió el sonido. Envíame el archivo debug.log (botón de abajo) para seguir investigando."
-                    .into(),
-                WARN,
-            ),
-        };
-        ui.label(RichText::new(text).color(color));
-        if let Some(v) = outcome.eq_status {
-            ui.label(format!("El ajuste 0x9E importa: rzr enviará {v} para mantener el ecualizador activo."));
-        }
-        ui.add_space(4.0);
-        faint_text(ui, "Al cerrar se vuelve a aplicar tu perfil. El detalle quedó en debug.log.");
-        ui.add_space(10.0);
-        ui.horizontal(|ui| {
-            if ui.button(RichText::new("Terminar").size(15.0)).clicked() {
-                out.push(Request::Finish(self.outcome()));
-            }
-            if external_link(ui, "Abrir carpeta de registros").clicked() {
-                if let Some(dir) = crate::debuglog::path().parent() {
-                    crate::winaudio::open_path(dir);
-                }
-            }
-        });
+        assert_eq!(w.view(true, false)["stage"], "summary");
+        assert_eq!(w.outcome().method, Some((EqMethod::Relatch, true)));
     }
 }

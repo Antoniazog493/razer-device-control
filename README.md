@@ -1,6 +1,6 @@
 # rzr
 
-Panel de control liviano para los audífonos **Razer BlackShark V2 Pro** (versión 2.4 GHz + Bluetooth, dongle `1532:0555`) que **reemplaza a Razer Synapse**. Es un solo `.exe` portátil de ~9 MB, sin instalador ni servicios en segundo plano.
+Panel de control liviano para los audífonos **Razer BlackShark V2 Pro** (versión 2.4 GHz + Bluetooth, dongle `1532:0555`) que **reemplaza a Razer Synapse**. Es un solo `.exe` portátil de ~1,3 MB, sin instalador ni servicios en segundo plano.
 
 ![Pestaña Sonido](docs/sonido.png)
 
@@ -49,6 +49,7 @@ Sin Synapse, los audífonos vuelven a usar los efectos de Windows, que incluyen 
 
 - **Compilado automáticamente:** en la pestaña **Actions** del repositorio, abre la última ejecución de *Build* y descarga el artefacto `rzr-windows` (contiene `rzr.exe`).
 - **Compilarlo tú:** instala [Rust](https://rustup.rs) (1.95 o superior) y ejecuta `cargo build --release`. El ejecutable queda en `target/release/rzr.exe`.
+- **Requisito:** el panel usa Microsoft Edge WebView2, que ya viene con Windows 10 (actualizado) y Windows 11. Si faltara, rzr avisa y enlaza el instalador; `rzr --watch` y `rzr apply` funcionan igual sin él.
 
 ## Uso
 
@@ -73,7 +74,6 @@ rzr --silent --watch   Lo mismo, en segundo plano sin salida (para el inicio)
 rzr help               Ayuda
 
 --debug                Escribe debug.log aunque esté apagado en AJUSTES
---glow                 Dibuja el panel con OpenGL en vez de Direct3D 12
 ```
 
 La configuración se guarda en `%APPDATA%\rzr\config.json`. La primera vez, rzr migra la configuración de versiones anteriores (`HKCU\SOFTWARE\rzr`).
@@ -141,10 +141,21 @@ Una respuesta puede traer varios mensajes "PI" seguidos. El byte `[1]` es el lar
 | `src/synapse.rs` | Importador de `.synapse4` |
 | `src/winaudio.rs` | Volumen, silencio y dispositivo predeterminado de Windows |
 | `src/worker.rs` | Hilos en segundo plano (headset y audio) para la interfaz |
-| `src/gui/` | Interfaz (egui) con estilo Synapse; `diag.rs` es la prueba guiada |
+| `src/gui/` | Ventana (WebView2) y controlador del panel: recibe los comandos de la página y le envía el estado; `diag.rs` es la lógica de la prueba guiada |
+| `ui/` | La interfaz: `index.html`, `app.css`, `app.js` (y `demo.js` con datos de prueba) |
 | `src/registry.rs` | Migración del registro e inicio con Windows |
 
 `rzr --demo` abre el panel con un headset simulado, útil para probar la interfaz sin el dispositivo.
+
+### Modificar la interfaz
+
+La interfaz es una página web normal en `ui/`, que rzr muestra con WebView2 (el motor de Edge). Rust le envía el estado con `rzr.state(...)` y la página responde con comandos JSON como `{"cmd": "preset", "preset": "custom"}`. El estado lo arma `App::view()` y los comandos son el enum `Msg`, ambos en `src/gui/mod.rs`.
+
+- **Sin compilar:** abre `ui/index.html` en cualquier navegador. Sin rzr detrás, carga `demo.js` con datos de prueba y puedes probar casi todo.
+- **Con rzr:** `set RZR_UI_DIR=C:\ruta\a\ui` y luego `rzr --demo`. rzr lee la página de esa carpeta en vez de la incluida en el `.exe`: edita y pulsa F5.
+- **Agregar una función:** en el HTML, los atributos `data-text`, `data-show`, `data-toggle` y `data-slider` enlazan elementos con el estado (ver el comentario al inicio de `index.html`). Luego se agrega el comando a `Msg` y el dato a `App::view()`.
+
+Para compilar en Linux (solo para desarrollo) hace falta `libwebkit2gtk-4.1-dev`.
 
 ## Créditos
 

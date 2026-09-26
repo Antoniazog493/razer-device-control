@@ -47,7 +47,7 @@ fn main() {
 
     let source = if watch {
         "segundo plano"
-    } else if silent || args.len() > 1 && !has(&["--demo", "--debug", "--glow"]) {
+    } else if silent || args.len() > 1 && !has(&["--demo", "--debug"]) {
         "cli"
     } else {
         "panel"
@@ -75,15 +75,11 @@ fn main() {
     let cmd = positional.first().copied();
 
     if matches!(cmd, None | Some("config") | Some("gui")) && !watch && !has(&["--help", "-h"]) {
-        let glow = has(&["--glow"]);
-        if let Err(e) = gui::run(has(&["--demo"]), glow) {
+        if let Err(e) = gui::run(has(&["--demo"])) {
             dlog!("no se pudo abrir la ventana: {e}");
-            // No Direct3D 12 / Vulkan: start again with OpenGL.
-            if !glow && relaunch_with_glow(&args) {
-                return;
-            }
-            attach_console();
-            eprintln!("rzr: could not open the window: {e}");
+            show_error(&format!(
+                "No se pudo abrir el panel de rzr:\n{e}\n\nEl panel usa Microsoft Edge WebView2. Si falta, instálalo desde https://go.microsoft.com/fwlink/p/?LinkId=2124703\n\nMientras tanto puedes usar «rzr --watch» y «rzr apply»."
+            ));
             std::process::exit(1);
         }
         return;
@@ -106,14 +102,19 @@ fn main() {
     }
 }
 
-/// Start a new rzr process with the same arguments plus --glow.
-fn relaunch_with_glow(args: &[String]) -> bool {
-    let Ok(exe) = std::env::current_exe() else { return false };
-    std::process::Command::new(exe)
-        .args(&args[1..])
-        .arg("--glow")
-        .spawn()
-        .is_ok()
+/// Error dialog for when the panel can't open (there's no console to print to).
+#[cfg(windows)]
+fn show_error(text: &str) {
+    use windows::core::HSTRING;
+    use windows::Win32::UI::WindowsAndMessaging::{MessageBoxW, MB_ICONERROR, MB_OK};
+    unsafe {
+        MessageBoxW(None, &HSTRING::from(text), &HSTRING::from("rzr"), MB_OK | MB_ICONERROR);
+    }
+}
+
+#[cfg(not(windows))]
+fn show_error(text: &str) {
+    eprintln!("rzr: {text}");
 }
 
 fn print_help() {

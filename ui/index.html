@@ -1,0 +1,354 @@
+<!doctype html>
+<!--
+  rzr control panel. rzr.exe shows this page in WebView2 and sends it the
+  state; the page sends back small JSON commands. Open it straight in a
+  browser to see it with demo data (demo.js), no rzr needed.
+
+  Bindings (handled in app.js, so most changes need no JavaScript):
+    data-text="a.b"      text from the state (— when empty)
+    data-show="a.b"      shown only when the value is truthy ("!a.b" = falsy)
+    data-level-from="a.b"  sets data-level to the value (ok/warn/error), which colours it
+    data-toggle="a.b"    on/off switch; data-send="cmd" sends {cmd, on}
+    data-slider="a.b"    slider; see makeSlider() for its attributes
+    data-send="cmd"      on a button: sends {cmd}
+    data-open="what"     opens something outside the app (mixer, sound, ...)
+-->
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>rzr</title>
+<link rel="stylesheet" href="app.css">
+</head>
+<body>
+
+<header class="titlebar">
+  <svg class="logo" viewBox="0 0 22 22" aria-hidden="true"><circle cx="11" cy="11" r="11" fill="var(--green)"/><circle cx="11" cy="11" r="6.8" fill="var(--titlebar)"/><circle cx="11" cy="11" r="3.1" fill="var(--green)"/></svg>
+  <span class="brand">rzr</span>
+  <span class="brand-sub">AUDIO</span>
+  <span class="badge" data-show="demo">DEMO</span>
+  <span class="spacer"></span>
+  <span class="busy" data-show="device.busy"><span class="spinner"></span>Aplicando…</span>
+  <span class="status" data-level-from="device.level"><span class="dot"></span><span data-text="device.text"></span></span>
+</header>
+
+<nav class="tabs" role="tablist">
+  <button role="tab" data-tab="sound" aria-selected="true">SONIDO</button>
+  <button role="tab" data-tab="enhancement">MEJORAS</button>
+  <button role="tab" data-tab="mic">MICRÓFONO</button>
+  <button role="tab" data-tab="power">ENERGÍA</button>
+  <button role="tab" data-tab="settings">AJUSTES</button>
+</nav>
+
+<div class="profilebar">
+  <div class="profile-picker">
+    <label for="profile">PERFIL</label>
+    <select id="profile"></select>
+    <div class="menu-wrap">
+      <button class="icon-button" id="profile-menu-button" aria-haspopup="menu" title="Opciones del perfil">•••</button>
+      <div class="menu" id="profile-menu" role="menu" hidden>
+        <button role="menuitem" data-send="new_profile">Nuevo perfil</button>
+        <button role="menuitem" data-send="duplicate_profile">Duplicar perfil</button>
+        <button role="menuitem" data-dialog="rename">Renombrar…</button>
+        <button role="menuitem" data-dialog="delete" id="delete-profile">Eliminar…</button>
+        <hr>
+        <button role="menuitem" data-import>Importar de Synapse (.synapse4)…</button>
+        <button role="menuitem" data-send="apply_now">Aplicar al headset ahora</button>
+      </div>
+    </div>
+  </div>
+  <div class="battery-mini" title="Batería del headset">
+    <span id="battery-text">—</span>
+    <span class="battery-icon"><span class="battery-fill"></span></span>
+  </div>
+</div>
+
+<main>
+<div class="content">
+
+<!-- ============================================================ SONIDO -->
+<section class="page" data-page="sound">
+  <div class="hero">
+    <svg class="headset" viewBox="-110 -110 220 230" aria-hidden="true">
+      <path class="band" d="M -58 4 C -62 -92 62 -92 58 4"/>
+      <path class="band-line" d="M -58 4 C -62 -92 62 -92 58 4"/>
+      <path class="boom" d="M -58 44 C -60 84 -40 92 -18 86"/>
+      <circle class="mic" cx="-16" cy="86" r="6"/>
+      <g class="cup"><rect x="-77" y="-10" width="34" height="76" rx="15"/><rect class="inner" x="-70" y="2" width="20" height="52" rx="9"/><circle class="accent" cx="-60" cy="28" r="3.5"/></g>
+      <g class="cup"><rect x="43" y="-10" width="34" height="76" rx="15"/><rect class="inner" x="50" y="2" width="20" height="52" rx="9"/><circle class="accent" cx="60" cy="28" r="3.5"/></g>
+    </svg>
+    <div class="hero-status" data-level-from="device.level" data-text="device.text"></div>
+  </div>
+
+  <section class="card">
+    <header>
+      <h2>ECUALIZADOR DE AUDIO</h2>
+      <span class="help" data-tip="Los preajustes están guardados en el headset. PERSONALIZADO usa tu propia curva de 10 bandas (−5 a +5 dB).">?</span>
+    </header>
+    <p class="dim">Selecciona un preajuste de audio o personaliza uno a tu gusto.</p>
+    <div class="segmented" id="eq-mode">
+      <button data-mode="standard">ESTÁNDAR</button>
+      <button data-mode="esports">ESPORTS</button>
+    </div>
+    <div class="preset-row">
+      <div class="presets" id="presets"></div>
+      <button class="link" data-send="eq_reset" data-show="profile.editable" title="Deja la curva personalizada plana">⟲ Restablecer</button>
+      <button class="link" data-send="eq_copy_to_custom" data-show="profile.has_curve" title="Reemplaza tu curva PERSONALIZADA por la de este preajuste para editarla">Copiar a personalizado</button>
+    </div>
+    <div class="eq" id="eq"></div>
+    <p class="faint" data-show="profile.editable">Arrastra los puntos para ajustar cada banda. Se envía al headset al soltar.</p>
+    <p class="faint" data-show="!profile.editable">Curva de referencia del preajuste guardado en el headset (no editable). Usa «Copiar a personalizado» para partir de ella.</p>
+  </section>
+
+  <div class="grid">
+    <section class="card">
+      <header>
+        <h2>VOLUMEN</h2>
+        <button class="toggle" id="out-mute" data-show="audio.out" aria-label="Sonido activado"></button>
+        <span class="help" data-tip="Volumen de Windows para los auriculares. El interruptor silencia la salida.">?</span>
+      </header>
+      <div data-show="audio.out">
+        <div class="slider" id="out-volume" data-min="0" data-max="100" data-labels="0,100"></div>
+        <p class="faint" data-text="audio.out.name"></p>
+        <div class="links">
+          <button class="link external" data-open="mixer">Mezclador de volumen</button>
+          <button class="link external" data-open="sound">Propiedades de sonido</button>
+        </div>
+      </div>
+      <p class="dim" data-show="!audio.out">No se encontró la salida de audio del headset en Windows.</p>
+    </section>
+
+    <section class="card">
+      <header>
+        <h2>SALIDA PREDETERMINADA</h2>
+        <span class="help" data-tip="Windows a veces cambia de dispositivo al reconectar. rzr lo corrige al conectar el headset.">?</span>
+      </header>
+      <p class="dim">Dispositivo de salida que se establecerá como predeterminado al conectar el headset.</p>
+      <select class="wide" data-devices="out"></select>
+    </section>
+  </div>
+</section>
+
+<!-- =========================================================== MEJORAS -->
+<section class="page" data-page="enhancement" hidden>
+  <div class="grid">
+    <section class="card">
+      <header>
+        <h2>NO MOLESTAR</h2>
+        <button class="toggle" data-toggle="profile.dnd" data-send="dnd"></button>
+        <span class="help" data-tip="Se guarda en el headset.">?</span>
+      </header>
+      <p class="dim">Bloquea las llamadas entrantes de tu móvil (vía Bluetooth) mientras juegas en 2.4 GHz.</p>
+      <p class="faint">Nota: solo aplica cuando el headset está conectado al dongle inalámbrico y emparejado con tu móvil a la vez.</p>
+    </section>
+
+    <section class="card unavailable">
+      <header><h2>MEJORAS DE SONIDO (THX)</h2></header>
+      <ul class="features">
+        <li><span class="toggle" aria-disabled="true"></span>BASS BOOST</li>
+        <li><span class="toggle" aria-disabled="true"></span>NORMALIZACIÓN DE SONIDO</li>
+        <li><span class="toggle" aria-disabled="true"></span>CLARIDAD DE VOZ</li>
+        <li><span class="toggle" aria-disabled="true"></span>THX SPATIAL AUDIO</li>
+      </ul>
+      <p class="dim">Las hace el motor de THX que Synapse instala en Windows (un efecto de audio), no el headset. rzr podrá controlarlas cuando sepamos dónde guarda THX sus ajustes.</p>
+      <p class="faint">Si THX no suena: en el Panel de sonido, los auriculares BlackShark deben tener las mejoras de audio activadas y el audio espacial de Windows (Windows Sonic) desactivado.</p>
+      <p class="faint">Sin Synapse, Windows ofrece sus propias mejoras (Bass Boost, Loudness Equalization, sonido envolvente virtual): Panel de sonido › Reproducción › BlackShark › Propiedades › Mejoras.</p>
+      <button class="link external" data-open="sound">Abrir Panel de sonido</button>
+    </section>
+  </div>
+</section>
+
+<!-- ======================================================== MICRÓFONO -->
+<section class="page" data-page="mic" hidden>
+  <div class="grid">
+    <div class="column">
+      <section class="card">
+        <header>
+          <h2>MICRÓFONO</h2>
+          <button class="toggle" id="in-mute" data-show="audio.in" aria-label="Micrófono activado"></button>
+          <span class="help" data-tip="Silencia o activa el micrófono en Windows.">?</span>
+        </header>
+        <div data-show="audio.in">
+          <h3>VOLUMEN DEL MICRÓFONO</h3>
+          <div class="slider" id="in-volume" data-min="0" data-max="100" data-labels="0,100"></div>
+          <p class="faint" data-text="audio.in.name"></p>
+        </div>
+        <p class="dim" data-show="!audio.in">No se encontró el micrófono del headset en Windows.</p>
+        <p class="mic-state" id="mic-state"><span class="dot"></span><span></span></p>
+      </section>
+
+      <section class="card">
+        <header><h2>ENTRADA PREDETERMINADA</h2></header>
+        <p class="dim">Micrófono que se establecerá como predeterminado al conectar el headset.</p>
+        <select class="wide" data-devices="in"></select>
+      </section>
+    </div>
+
+    <div class="column">
+      <section class="card">
+        <header>
+          <h2>MONITOREO DE MICRÓFONO (SIDETONE)</h2>
+          <button class="toggle" data-toggle="profile.sidetone_enabled" data-send="sidetone"></button>
+          <span class="help" data-tip="Se guarda en el headset.">?</span>
+        </header>
+        <p class="dim">Escucha tu propia voz a través de los auriculares mientras hablas.</p>
+        <div class="slider" data-slider="profile.sidetone_volume" data-send="sidetone_volume" data-enabled="profile.sidetone_enabled" data-min="1" data-max="100" data-labels="0,100"></div>
+      </section>
+
+      <section class="card unavailable">
+        <header><h2>MEJORAS DE MICRÓFONO (SOFTWARE)</h2></header>
+        <ul class="features">
+          <li><span class="toggle" aria-disabled="true"></span>ECUALIZADOR DE MICRÓFONO</li>
+          <li><span class="toggle" aria-disabled="true"></span>NORMALIZACIÓN DE VOLUMEN</li>
+          <li><span class="toggle" aria-disabled="true"></span>CLARIDAD VOCAL</li>
+          <li><span class="toggle" aria-disabled="true"></span>REDUCCIÓN DE RUIDO AMBIENTAL</li>
+          <li><span class="toggle" aria-disabled="true"></span>SENSIBILIDAD (PUERTA DE VOZ)</li>
+        </ul>
+        <p class="dim">Synapse procesa estas funciones en el PC; no envía ningún comando al headset para ellas, por eso no están disponibles sin Synapse.</p>
+      </section>
+    </div>
+  </div>
+</section>
+
+<!-- =========================================================== ENERGÍA -->
+<section class="page" data-page="power" hidden>
+  <div class="grid">
+    <section class="card">
+      <header><h2>BATERÍA</h2></header>
+      <div class="battery-big">
+        <span class="percent" id="battery-percent">—</span>
+        <span class="battery-state" id="battery-state"></span>
+      </div>
+      <div class="meter" id="battery-meter"><span></span></div>
+    </section>
+
+    <section class="card">
+      <header>
+        <h2>APAGADO AUTOMÁTICO</h2>
+        <button class="toggle" data-toggle="profile.auto_off_enabled" data-send="auto_off"></button>
+        <span class="help" data-tip="Se guarda en el headset.">?</span>
+      </header>
+      <p class="dim">Apaga el headset tras este tiempo de inactividad para ahorrar batería.</p>
+      <div class="slider" data-slider="profile.auto_off_minutes" data-send="auto_off_minutes" data-enabled="profile.auto_off_enabled" data-min="15" data-max="60" data-step="5" data-unit=" min" data-labels="15 MIN,60 MIN"></div>
+    </section>
+  </div>
+
+  <section class="card">
+    <header><h2>INFORMACIÓN DEL DISPOSITIVO</h2></header>
+    <dl class="info">
+      <dt>Dispositivo</dt><dd data-text="device.product"></dd>
+      <dt>Dongle conectado</dt><dd data-text="device.dongle"></dd>
+      <dt>Headset enlazado</dt><dd data-text="device.headset"></dd>
+      <dt>Firmware del headset</dt><dd data-text="device.firmware"></dd>
+      <dt>Firmware del dongle</dt><dd data-text="device.dongle_firmware"></dd>
+      <dt>Número de serie</dt><dd data-text="device.serial"></dd>
+      <dt>Preajuste activo en el headset</dt><dd data-text="device.preset"></dd>
+    </dl>
+  </section>
+
+  <section class="card">
+    <header>
+      <h2>REGISTRO DE CONEXIÓN</h2>
+      <span class="help" data-tip="Cada vez que el headset pierde o recupera el enlace con el dongle se anota la hora y cuánto duró el corte. Funciona con el panel abierto y en segundo plano (Iniciar con Windows).">?</span>
+    </header>
+    <p class="drops" id="drops"></p>
+    <pre class="log" id="connlog"></pre>
+    <button class="link external" data-open="connlog">Abrir registro completo</button>
+    <p class="faint">Si los cortes coinciden con algo (un disco externo, el celular, el microondas...), esa es la pista.</p>
+  </section>
+</section>
+
+<!-- =========================================================== AJUSTES -->
+<section class="page" data-page="settings" hidden>
+  <div class="grid">
+    <div class="column">
+      <section class="card">
+        <header>
+          <h2>INICIAR CON WINDOWS</h2>
+          <button class="toggle" data-toggle="settings.autostart" data-send="autostart"></button>
+        </header>
+        <p class="dim">rzr se ejecutará en segundo plano, sin ventana, y aplicará tu perfil cada vez que el headset se conecte o reconecte.</p>
+        <p class="faint">Equivale a ejecutar «rzr --silent --watch» al iniciar sesión.</p>
+      </section>
+
+      <section class="card">
+        <header>
+          <h2>DIAGNÓSTICO</h2>
+          <span class="help" data-tip="Para cuando algo no funciona: la prueba guiada averigua cómo hablarle a tu headset, y el registro guarda cada comando para poder analizarlo.">?</span>
+        </header>
+        <button class="button" data-send="wizard_open">Prueba guiada del ecualizador…</button>
+        <p class="faint">Si cambiar el ecualizador no cambia el sonido, haz esta prueba (unos 3 minutos, con música puesta).</p>
+        <div class="row">
+          <button class="toggle" data-toggle="settings.debug_log" data-send="debug_log"></button>
+          <span>Registro de depuración (debug.log)</span>
+        </div>
+        <p class="faint">Guarda cada comando enviado y recibido del headset. Déjalo apagado salvo que estés investigando un problema.</p>
+        <div class="links">
+          <button class="link external" data-open="debuglog">Abrir debug.log</button>
+          <button class="link external" data-open="logdir">Abrir carpeta</button>
+        </div>
+      </section>
+
+      <section class="card" id="advanced">
+        <header>
+          <h2>AVANZADO</h2>
+          <span class="help" data-tip="La prueba guiada ajusta esto sola. Cámbialo a mano solo si sabes lo que haces.">?</span>
+        </header>
+        <div class="row">
+          <span>Método de envío del ecualizador</span>
+          <select id="eq-method">
+            <option value="verified">Verificado (actual)</option>
+            <option value="original">Primera versión de rzr</option>
+            <option value="relatch">Escribir y cambiar de preset</option>
+          </select>
+        </div>
+        <div class="row">
+          <button class="toggle" id="release-remote"></button>
+          <span>Devolver el control al headset tras cada comando</span>
+        </div>
+        <div class="row">
+          <button class="toggle" id="legacy-config"></button>
+          <span>Secuencia de inicio de Synapse (0x9E = <span data-text="settings.eq_status"></span>)</span>
+        </div>
+        <p class="faint">La secuencia de inicio consulta la versión del dongle y fija «Speaker Preset EQ Status» (0x9E) al aplicar el perfil completo, como Synapse al arrancar.</p>
+      </section>
+    </div>
+
+    <div class="column">
+      <section class="card">
+        <header><h2>PERFILES</h2></header>
+        <p class="dim">Tus perfiles se guardan en:</p>
+        <p class="mono faint" data-text="settings.config_path"></p>
+        <button class="button" data-import>Importar perfil de Synapse (.synapse4)…</button>
+        <p class="faint">También puedes arrastrar un archivo .synapse4 a esta ventana.</p>
+        <div class="links">
+          <button class="button" data-send="apply_now">Aplicar perfil al headset ahora</button>
+          <button class="button" data-open="configdir">Abrir carpeta</button>
+        </div>
+      </section>
+
+      <section class="card">
+        <header><h2>ACERCA DE</h2></header>
+        <p class="dim">rzr <span data-text="version"></span> — control del Razer BlackShark V2 Pro sin Razer Synapse.</p>
+        <p class="faint">Protocolo USB por ingeniería inversa de Synapse 4, verificado con el driver de OpenRazer para este headset.</p>
+      </section>
+    </div>
+  </div>
+</section>
+
+</div>
+</main>
+
+<footer class="footer" data-text="device.product"></footer>
+
+<!-- ========================================================== overlays -->
+<div class="modal" id="dialog" hidden>
+  <div class="dialog" role="dialog" aria-modal="true"></div>
+</div>
+<div class="toasts" id="toasts" aria-live="polite"></div>
+<div class="drop-hint" id="drop-hint" hidden>Suelta el archivo .synapse4 para importarlo</div>
+<input type="file" id="import-file" accept=".synapse4" hidden>
+
+<script src="app.js"></script>
+</body>
+</html>

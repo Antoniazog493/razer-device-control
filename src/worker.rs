@@ -2,6 +2,7 @@
 /// a second, and the link needs polling), one talks to Windows audio.
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -19,6 +20,9 @@ const EVENT_TICK: Duration = Duration::from_millis(250);
 /// Ignore the headset's reported preset this long after our own writes:
 /// a cross-family select can briefly land on the wrong preset.
 const PRESET_SETTLE: Duration = Duration::from_secs(4);
+
+/// Called from a worker thread after it sends something, to wake the UI.
+pub type Notify = Arc<dyn Fn() + Send + Sync>;
 
 /// What part of the profile to push to the headset.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
@@ -103,7 +107,7 @@ pub enum DevEvent {
 pub fn spawn_device_worker(
     target: Target,
     demo: bool,
-    ctx: eframe::egui::Context,
+    notify: Notify,
 ) -> (Sender<DevCmd>, Receiver<DevEvent>) {
     let (cmd_tx, cmd_rx) = mpsc::channel();
     let (ev_tx, ev_rx) = mpsc::channel();
@@ -113,7 +117,7 @@ pub fn spawn_device_worker(
             info: DeviceInfo::default(),
             target,
             tx: ev_tx,
-            ctx,
+            notify,
             demo,
             last_write: Instant::now() - PRESET_SETTLE,
             button_preset: false,
@@ -131,7 +135,7 @@ struct DevWorker {
     info: DeviceInfo,
     target: Target,
     tx: Sender<DevEvent>,
-    ctx: eframe::egui::Context,
+    notify: Notify,
     demo: bool,
     last_write: Instant,
     /// The headset's EQ button sent a preset event since our last write.
@@ -232,7 +236,7 @@ impl DevWorker {
 
     fn emit(&self, ev: DevEvent) {
         let _ = self.tx.send(ev);
-        self.ctx.request_repaint();
+        (self.notify)();
     }
 
     fn message(&self, text: impl Into<String>, error: bool) {
@@ -524,7 +528,7 @@ pub struct AudioState {
     pub headset_in: Option<Endpoint>,
 }
 
-pub fn spawn_audio_worker(demo: bool, ctx: eframe::egui::Context) -> (Sender<AudioCmd>, Receiver<AudioState>) {
+pub fn spawn_audio_worker(demo: bool, notify: Notify) -> (Sender<AudioCmd>, Receiver<AudioState>) {
     let (cmd_tx, cmd_rx) = mpsc::channel::<AudioCmd>();
     let (st_tx, st_rx) = mpsc::channel();
     thread::spawn(move || {
@@ -583,7 +587,7 @@ pub fn spawn_audio_worker(demo: bool, ctx: eframe::egui::Context) -> (Sender<Aud
                 if st_tx.send(state).is_err() {
                     break;
                 }
-                ctx.request_repaint();
+                notify();
             }
         }
     });
