@@ -20,8 +20,8 @@ const POLL_CONNECTED: Duration = Duration::from_secs(5);
 const POLL_DISCONNECTED: Duration = Duration::from_secs(3);
 /// How often to look for unsolicited link events between polls.
 const EVENT_TICK: Duration = Duration::from_millis(250);
-/// Ignore the headset's reported preset this long after our own writes:
-/// a cross-family select can briefly land on the wrong preset.
+/// Without an EQ-button event, ignore a preset mismatch this long after our
+/// own writes: a cross-family select can briefly land on the wrong preset.
 const PRESET_SETTLE: Duration = Duration::from_secs(4);
 
 /// Called from a worker thread after it sends something, to wake the UI.
@@ -144,7 +144,8 @@ struct DevWorker {
     notify: Notify,
     demo: bool,
     last_write: Instant,
-    /// The headset's EQ button sent a preset event since our last write.
+    /// The headset sent a preset event since the last poll (its EQ button,
+    /// or a select of ours that briefly landed elsewhere).
     button_preset: bool,
     /// Guided test running: no polling, no automatic writes.
     diag: bool,
@@ -210,11 +211,11 @@ impl DevWorker {
         let mut poll_now = false;
         for e in &events {
             dlog!("aviso del headset: {:02X} {:?}", e.cmd, e.data);
-            // The EQ button reports the new preset (our own writes do too,
-            // hence the settle time).
+            // The EQ button reports the new preset. A select of ours that
+            // briefly lands elsewhere does too, so this only triggers a read:
+            // what the headset plays once our write is done decides.
             if e.cmd == protocol::CMD_PRESET_GET
                 && !self.diag
-                && self.last_write.elapsed() > PRESET_SETTLE
                 && e.data.first().and_then(|&s| EqPreset::from_selector(s)).is_some()
             {
                 self.button_preset = true;
@@ -355,7 +356,6 @@ impl DevWorker {
         self.set_busy(true);
         let result = self.write(changes);
         self.last_write = Instant::now();
-        self.button_preset = false;
         if crate::debuglog::enabled() && result.is_ok() && !self.demo {
             if let Some(dev) = &self.dev {
                 dev.eq_readback();
@@ -485,18 +485,24 @@ impl DevWorker {
 
         // Preset switched from the headset's EQ button, or our write
         // didn't take? Either way, show what the headset really plays.
+        let from_button = std::mem::take(&mut self.button_preset);
         if let Some(p) = self.info.status.preset {
-            if connected && self.last_write.elapsed() > PRESET_SETTLE && p != self.target.profile.active_preset() {
-                let from_button = std::mem::take(&mut self.button_preset);
-                dlog!(
-                    "el headset está en {p:?}, el perfil dice {:?} (botón: {from_button})",
-                    self.target.profile.active_preset()
-                );
+            let wanted = self.target.profile.active_preset();
+            if connected && preset_drifted(p, wanted, from_button, self.last_write.elapsed()) {
+                dlog!("el headset está en {p:?}, el perfil dice {wanted:?} (botón: {from_button})");
                 self.target.profile.select_preset(p);
                 self.emit(DevEvent::PresetChanged { preset: p, from_button });
             }
         }
     }
+}
+
+/// Whether the headset's preset `read` should replace the profile's `wanted`
+/// one. After a preset event it should right away: the read comes after our
+/// own write finished, so it is what the headset really plays. Without one,
+/// only once our last write has settled.
+fn preset_drifted(read: EqPreset, wanted: EqPreset, preset_event: bool, since_write: Duration) -> bool {
+    read != wanted && (preset_event || since_write > PRESET_SETTLE)
 }
 
 /// Make the configured endpoints the Windows defaults.
@@ -930,5 +936,18 @@ mod tests {
             ThxCmd::Mic(m)
         };
         assert_eq!(thx_batch(vec![mic(true), eq(1), mic(false), eq(2)]), vec![mic(false), eq(2)]);
+    }
+
+    #[test]
+    fn the_eq_button_counts_right_after_our_own_writes() {
+        let just_now = Duration::from_millis(500);
+        let settled = PRESET_SETTLE + Duration::from_millis(1);
+        // Button pressed 0.5 s after a write from the panel.
+        assert!(preset_drifted(EqPreset::Music, EqPreset::Movie, true, just_now));
+        // A select of ours that briefly landed elsewhere: the read shows ours.
+        assert!(!preset_drifted(EqPreset::Fortnite, EqPreset::Fortnite, true, just_now));
+        // No event: a mismatch right after a write may still be settling.
+        assert!(!preset_drifted(EqPreset::Valorant, EqPreset::Fortnite, false, just_now));
+        assert!(preset_drifted(EqPreset::Valorant, EqPreset::Fortnite, false, settled));
     }
 }

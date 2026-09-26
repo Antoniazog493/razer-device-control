@@ -2,7 +2,7 @@
 
 Para una sesión de Claude Code que corre **en la PC del usuario**, con Windows, el dongle conectado y THX instalado. Complementa a [ESTADO.md](ESTADO.md), que sigue siendo la fuente de verdad. Este archivo explica qué cambia al trabajar en local y por dónde seguir.
 
-Última actualización: 2026-09-26 (segunda sesión) · rama `UI-creation`.
+Última actualización: 2026-09-26 (tercera sesión) · rama `UI-creation`.
 
 ## Por qué en local
 
@@ -87,7 +87,7 @@ Hecho el 2026-09-26, segunda sesión (pasos 1 a 4, todos oídos por el usuario c
 
 **La próxima sesión:**
 
-- Las pruebas de "Esperando al usuario" en ESTADO: mejoras del micrófono tras reiniciar, normalización con audio de mucho contraste y botón EQ del headset con rzr abierto.
+- Las pruebas de "Esperando al usuario" en ESTADO: mejoras del micrófono tras reiniciar y normalización con audio de mucho contraste. (El botón EQ con rzr abierto ya se probó en la tercera sesión.)
 - Después, el paso 5: separar THX de Synapse.
 
 Notas para los próximos pasos:
