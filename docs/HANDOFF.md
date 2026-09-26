@@ -11,7 +11,7 @@ Hasta ahora el trabajo se hacía en la nube: se escribía un script, el usuario 
 ## Preparar el entorno
 
 1. `git fetch origin` y `git checkout UI-creation` y `git pull`.
-2. Rust estable con el toolchain MSVC (`rustup default stable-x86_64-pc-windows-msvc`; necesita las Build Tools de Visual Studio con "Desarrollo para el escritorio con C++"). Es lo mismo que usa el CI (`windows-latest`).
+2. Rust estable con el toolchain MSVC (`rustup default stable-x86_64-pc-windows-msvc`; necesita las Build Tools de Visual Studio con "Desarrollo para el escritorio con C++"). Es lo mismo que usa el CI (`windows-latest`). **En esta PC ya están instalados** (2026-09-26, con `winget`). Si `cargo` no aparece en una consola abierta antes de la instalación, agrega `%USERPROFILE%\.cargo\bin` al `PATH` de esa consola.
 3. Node.js, solo para `node --check`.
 4. Comprobar que todo pasa antes de tocar nada:
 
@@ -25,6 +25,7 @@ Hasta ahora el trabajo se hacía en la nube: se escribía un script, el usuario 
 
    En Windows no hace falta el target `x86_64-pc-windows-gnu`: `cargo build --release` ya es la compilación de Windows.
 5. Para probar el panel: `cargo run --release` (headset real) o `cargo run -- --demo`. **Cerrar Synapse** antes de usar rzr con el headset: los dos se pelean por el dongle.
+6. Para ver qué muestra el panel sin pedirle al usuario que lo describa, se puede capturar **solo la ventana de rzr** con `PrintWindow` (flag `PW_RENDERFULLCONTENT` = 2, funciona con WebView2 aunque la ventana esté tapada). La imagen se guarda en la carpeta temporal y no se sube.
 
 ## Reglas extra al trabajar en la PC real
 
@@ -62,53 +63,27 @@ El detalle y las fuentes están en [HALLAZGOS.md › THX](HALLAZGOS.md#thx-spati
   | Curva | `eqCurve`: 31 valores, un 0 y luego las 10 bandas repetidas 3 veces |
 
   `sequenceNumber` sube en cada cambio.
-- **Cómo cambia Synapse los ajustes:** no escribe el registro. Usa `ThxV3Native` → `thxv3lib` → ZeroMQ → **servicio de THX** (`VSSrv.exe`, paquete `thxrtsvc.inf`). Las direcciones del servicio están en `HKLM\SOFTWARE\THX\Discovery` (`tcp://127.0.0.1:49671` y `:49670`).
-- **Sin Synapse:** el Bass Boost siguió sonando con Synapse cerrado y los servicios de Razer detenidos. No se sabe si el servicio de THX seguía corriendo.
+- **Cómo se cambian los ajustes:** los guarda el **servicio de THX** (`VSSrv`, `C:\Windows\System32\VSSrv.exe`, corre como `LocalSystem` y sigue activo sin Synapse). Tiene dos entradas:
+  - **COM** (`VSSrv.CVSSrvTHXSettings`, interfaz `IVSSrvTHXSettings`): lo que usa rzr (`src/thx.rs`, [ADR 0004](adr/0004-thx-por-com.md)). Solo tiene interruptores para Spatial, Bass Boost y Claridad de voz, y el nivel de DRC (que no activa la normalización).
+  - **ZeroMQ** (`tcp://127.0.0.1:49671`, un `ROUTER`; `:49670` es un `PUB`): lo que usa Synapse, con `ThxV3Native` → `thxv3lib`. Permitiría todo, pero el servicio no respondió a los mensajes armados según lo averiguado.
+- **Leer `,6` por `IPropertyStore` corta el texto en 259 caracteres;** rzr lo lee con `winreg`.
 - **Los presets de THX no son los del headset:** THX tiene su propia curva por software, que se suma a la del headset. Con Synapse abierto, el botón EQ del headset también cambia la curva de THX.
 
 ## Qué sigue, en orden
 
-### 1. Averiguar cómo escribir los ajustes de THX
+Hecho el 2026-09-26: reconocimiento del servicio, estado de THX en MEJORAS e interruptores por COM (✅ en el headset para Claridad de voz y Spatial). Ver ESTADO.md.
 
-Es lo que falta para el punto 3 de "Sigue" en ESTADO.md. Una sola sesión local puede resolverlo.
+### 1. Normalización y niveles de THX por ZeroMQ
 
-1. **Reconocimiento (solo lectura).** Corre `tools/capturar-synapse.ps1 -Fase thx-servicio` como administrador, o haz lo mismo a mano:
-   - servicio de `VSSrv.exe`: nombre, cuenta con la que corre e inicio;
-   - quién escucha en los puertos de `Discovery`;
-   - permisos (ACL) de la clave `Properties`;
-   - contenido de `C:\ProgramData\THX\usb\1532\0555\thx_spatial.conf.json`;
-   - textos de `spatial-config-util.exe` y `VSSrv.exe`.
-2. **`spatial-config-util.exe`** (en `DriverStore\FileRepository\thxrtscu.inf_*`). Si sus textos muestran opciones de línea de comandos, prueba primero `--help` o `-h` y enséñale el resultado al usuario. Si permite fijar Bass Boost y los demás ajustes, es el camino más limpio.
-3. **Escribir el registro** (con respaldo y permiso):
-   - con música sonando y Synapse cerrado, cambia `bassBoostEnabled` en `,6` y sube `sequenceNumber`;
-   - pregúntale al usuario si oye el cambio;
-   - si no se oye, prueba también `,7` (el protobuf: el campo 1 es `sequenceNumber`, el 2 es `spatialEnabled`, etc.);
-   - comprueba si hace falta reiniciar el audio (`Restart-Service audiosrv`, con permiso).
-4. **Hablarle al servicio como Synapse.** Captura el tráfico de loopback (Wireshark con Npcap, interfaz "Adapter for loopback traffic capture") mientras el usuario cambia Bass Boost en Synapse. Los mensajes son ZeroMQ (ZMTP 3); probablemente llevan el mismo protobuf que `,7`.
-5. **¿Hace falta el servicio?** Repite la prueba que funcione con `VSSrv` detenido (con permiso, y vuelve a iniciarlo al terminar).
-6. **Anota el resultado** en HALLAZGOS.md y ADR 0003 (el camino elegido y por qué), y actualiza ESTADO.md.
+1. **Capturar a Synapse.** Instalar Wireshark con Npcap (lo instala el usuario; pídeselo) y capturar la interfaz "Adapter for loopback traffic capture" con el filtro `tcp.port == 49671`, mientras el usuario activa la normalización en Synapse y mueve su nivel.
+2. **Comparar** esos mensajes con lo que se intentó (HALLAZGOS: partes `x-originator:` y `x-payload:`, `THXMessage` con `Any`, `Register {pid}` y luego `State` completo con `sequence_number` + 1). Mirar el orden de las partes, las identidades del socket y si hay un saludo previo.
+3. **Probar lo mismo desde un script** (con permiso, con Synapse cerrado): primero algo reversible y audible, confirmando en el JSON. Después pasarlo a `src/thx.rs` y un ADR si cambia el camino.
 
-### 2. Mostrar el estado de THX en rzr (solo lectura)
+### 2. Pendientes de ESTADO.md que ahora son rápidos
 
-Ya se puede hacer sin esperar al paso 1:
-
-- Un módulo nuevo, por ejemplo `src/thx.rs`, que:
-  - busque la salida del headset (ya hay código de endpoints en `winaudio.rs`);
-  - lea `{d5e8f0ab-…},6` con `IPropertyStore` o con `winreg`;
-  - lo convierta con `serde` en una estructura con los campos de arriba.
-- La pestaña MEJORAS debe mostrar qué está activado y el preset de THX. Si no hay THX instalado, muestra un aviso y no falla.
-- Pruebas unitarias del análisis del JSON: usa un ejemplo **escrito a mano** con la forma del JSON de HALLAZGOS, no una captura real.
-- Actualiza ARQUITECTURA.md (módulo nuevo), `demo.js` (estado nuevo) y CONTEXT.md si aparece un término.
-
-### 3. Escribir los ajustes de THX
-
-Con el camino elegido en el paso 1: activar y desactivar Bass Boost, Normalización, Claridad de voz y Espacial, y confirmar cada cambio releyendo el JSON. Esto va con un ADR si el camino es difícil de revertir (por ejemplo, depender del protocolo del servicio).
-
-### 4. Pendientes de ESTADO.md que ahora son rápidos
-
-- **Abrir el panel nuevo en Windows** y corregir lo que aparezca.
-- **Ronda 2 de la prueba guiada** (AJUSTES › DIAGNÓSTICO), anotando qué preset de THX está activo y su curva, porque se suma a la del headset. Si hace falta aislar el headset, pon el preset `Custom` plano de THX o desactiva las mejoras de audio. Pregunta antes de cambiar cualquiera de las dos cosas.
-
+- **Terminar de revisar el panel en Windows:** parpadeo blanco al abrir, arrastrar un `.synapse4`, sliders y EQ.
+- **Ronda 2 de la prueba guiada** (AJUSTES › DIAGNÓSTICO), anotando el preset de THX que muestra MEJORAS, porque su curva se suma a la del headset. Si hace falta aislar el headset, pon el preset `Custom` plano de THX o desactiva las mejoras de audio. Pregunta antes de cambiar cualquiera de las dos cosas.
+- **¿THX suena con `VSSrv` detenido?** Requiere PowerShell como administrador y permiso. Vuelve a iniciarlo al terminar.
 ## Al terminar la sesión
 
 - ESTADO.md al día: qué quedó ✅ en hardware, qué sigue ⏳.

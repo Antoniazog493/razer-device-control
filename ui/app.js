@@ -68,6 +68,7 @@ function render() {
   renderBattery();
   renderEq();
   renderAudio();
+  renderThx();
   renderPower();
   renderSettings();
   renderDialog();
@@ -130,6 +131,12 @@ function renderAudio() {
   state.setAttribute("data-level", m === true ? "error" : m === false ? "ok" : "");
   state.lastElementChild.textContent =
     m === true ? "SILENCIADO con el botón del headset" : m === false ? "Activo (botón del headset)" : "Estado del botón de silencio desconocido";
+}
+
+/** THX switches only work while its service answers and no change is pending. */
+function renderThx() {
+  const writable = !!(S.thx && S.thx.writable);
+  for (const el of $$("[data-thx]")) el.setAttribute("aria-disabled", writable ? "false" : "true");
 }
 
 function renderPower() {

@@ -14,8 +14,12 @@ use std::time::{Duration, Instant};
 
 use crate::config::{Config, EqMethod, EqMode, Profile};
 use crate::protocol::{self, EqPreset, EQ_BANDS};
+use crate::thx::{self, ThxOption};
 use crate::winaudio::{self, AudioDevice, Endpoint};
-use crate::worker::{self, AudioCmd, AudioState, Change, DevCmd, DevEvent, DeviceInfo, DiagCmd, Notify, Target};
+use crate::worker::{
+    self, AudioCmd, AudioState, Change, DevCmd, DevEvent, DeviceInfo, DiagCmd, Notify, Target, ThxCmd, ThxEvent,
+    ThxStatus,
+};
 use crate::{connlog, debuglog, registry, synapse};
 
 pub use window::run;
@@ -88,6 +92,16 @@ pub enum Msg {
         value: u8,
         commit: bool,
     },
+    /// THX options (MEJORAS); they live in Windows, not in the profile.
+    ThxSpatial {
+        on: bool,
+    },
+    ThxBassBoost {
+        on: bool,
+    },
+    ThxVoiceClarity {
+        on: bool,
+    },
     Autostart {
         on: bool,
     },
@@ -123,8 +137,11 @@ pub struct App {
     dev_rx: Receiver<DevEvent>,
     audio_tx: Sender<AudioCmd>,
     audio_rx: Receiver<AudioState>,
+    thx_tx: Sender<ThxCmd>,
+    thx_rx: Receiver<ThxEvent>,
     info: DeviceInfo,
     audio: AudioState,
+    thx: ThxStatus,
     dirty_since: Option<Instant>,
     autostart: bool,
     /// Connection log shown in the Power tab, re-read every few seconds.
@@ -142,7 +159,8 @@ impl App {
     pub fn new(demo: bool, notify: Notify) -> Self {
         let cfg = Config::load();
         let (dev_tx, dev_rx) = worker::spawn_device_worker(Target::from_config(&cfg), demo, notify.clone());
-        let (audio_tx, audio_rx) = worker::spawn_audio_worker(demo, notify);
+        let (audio_tx, audio_rx) = worker::spawn_audio_worker(demo, notify.clone());
+        let (thx_tx, thx_rx) = worker::spawn_thx_worker(demo, notify);
         Self {
             cfg,
             demo,
@@ -150,8 +168,11 @@ impl App {
             dev_rx,
             audio_tx,
             audio_rx,
+            thx_tx,
+            thx_rx,
             info: DeviceInfo::default(),
             audio: AudioState::default(),
+            thx: ThxStatus::default(),
             dirty_since: None,
             autostart: registry::autostart_enabled(),
             conn_log: connlog::recent(12),
@@ -249,6 +270,13 @@ impl App {
         while let Ok(state) = self.audio_rx.try_recv() {
             self.audio = state;
             self.changed = true;
+        }
+        while let Ok(ev) = self.thx_rx.try_recv() {
+            self.changed = true;
+            match ev {
+                ThxEvent::Status(status) => self.thx = status,
+                ThxEvent::Message { text, error } => self.toast(text, error),
+            }
         }
     }
 
@@ -399,6 +427,9 @@ impl App {
                     }
                 }
             }
+            Msg::ThxSpatial { on } => self.set_thx(ThxOption::Spatial, on),
+            Msg::ThxBassBoost { on } => self.set_thx(ThxOption::BassBoost, on),
+            Msg::ThxVoiceClarity { on } => self.set_thx(ThxOption::VoiceClarity, on),
             Msg::Autostart { on } => match registry::set_autostart(on) {
                 Ok(()) => self.autostart = on,
                 Err(e) => self.toast(e, true),
@@ -504,6 +535,17 @@ impl App {
         }
     }
 
+    fn set_thx(&mut self, option: ThxOption, on: bool) {
+        let Some(state) = &mut self.thx.state else { return };
+        if !self.thx.service || self.thx.busy || option.is_on(state) == on {
+            return;
+        }
+        // Show it now; the THX thread reports back once the service confirms (or not).
+        option.set(state, on);
+        self.thx.busy = true;
+        let _ = self.thx_tx.send(ThxCmd::Set(option, on));
+    }
+
     /// Update the local copy of an endpoint so the page doesn't jump back
     /// before the audio worker reports the new state.
     fn endpoint_mut(&mut self, id: &str, f: impl Fn(&mut Endpoint)) {
@@ -600,6 +642,18 @@ impl App {
                 "eq_status": self.cfg.eq_status,
                 "config_path": Config::path().display().to_string(),
             },
+            "thx": self.thx.state.as_ref().map(|s| json!({
+                "writable": self.thx.service && !self.thx.busy,
+                "busy": self.thx.busy,
+                "preset": thx::preset_label(&s.preset_name),
+                "spatial": s.spatial_enabled,
+                "bass_boost": s.bass_boost_enabled,
+                "bass_boost_level": s.bass_boost.round(),
+                "normalization": s.drc_enabled,
+                "normalization_level": s.drc_level.round(),
+                "voice_clarity": s.dialog_enhancement_enabled,
+                "voice_clarity_level": s.dialog_enhancement.round(),
+            })),
             "connlog": { "lines": self.conn_log, "drops_today": self.conn_drops_today },
             "wizard": self.wizard.as_ref().map(|w| w.view(st.headset_connected, self.info.busy)),
         })
@@ -649,6 +703,9 @@ mod tests {
             parse(r#"{"cmd":"advanced","eq_method":"relatch","release_remote":false,"send_legacy_config":true}"#),
             Msg::Advanced { eq_method: EqMethod::Relatch, release_remote: false, send_legacy_config: true }
         ));
+        assert!(matches!(parse(r#"{"cmd":"thx_bass_boost","on":false}"#), Msg::ThxBassBoost { on: false }));
+        assert!(matches!(parse(r#"{"cmd":"thx_voice_clarity","on":true}"#), Msg::ThxVoiceClarity { on: true }));
+        assert!(matches!(parse(r#"{"cmd":"thx_spatial","on":true}"#), Msg::ThxSpatial { on: true }));
         assert!(serde_json::from_str::<Msg>(r#"{"cmd":"format_disk"}"#).is_err());
     }
 }

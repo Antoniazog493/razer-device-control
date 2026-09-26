@@ -1,5 +1,6 @@
 //! Background threads for the GUI: one owns the HID device (writes can take
-//! a second, and the link needs polling), one talks to Windows audio.
+//! a second, and the link needs polling), one talks to Windows audio, and one
+//! to THX (confirming a THX change takes seconds).
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
@@ -11,6 +12,7 @@ use crate::connlog::ConnLog;
 use crate::device::{self, Device, Options, Status};
 use crate::dlog;
 use crate::protocol::{self, EqPreset, EQ_BANDS};
+use crate::thx::{self, ThxOption, ThxState};
 use crate::winaudio::{self, AudioDevice, Endpoint, Flow};
 
 const POLL_CONNECTED: Duration = Duration::from_secs(5);
@@ -587,6 +589,192 @@ pub fn spawn_audio_worker(demo: bool, notify: Notify) -> (Sender<AudioCmd>, Rece
         }
     });
     (cmd_tx, st_rx)
+}
+
+// ---------------------------------------------------------------------------
+// THX
+
+/// How often to re-read the THX state (it also changes from Synapse or the
+/// headset's EQ button while Synapse is open).
+const THX_POLL: Duration = Duration::from_secs(2);
+/// How long the service may take to rewrite its JSON after a change (it took
+/// 1-3 s on the user's PC).
+const THX_CONFIRM: Duration = Duration::from_secs(6);
+
+pub enum ThxCmd {
+    Set(ThxOption, bool),
+}
+
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct ThxStatus {
+    /// None: THX isn't installed on the headset's output (or it isn't there).
+    pub state: Option<ThxState>,
+    /// The THX service answers, so options can be switched.
+    pub service: bool,
+    pub busy: bool,
+}
+
+pub enum ThxEvent {
+    Status(ThxStatus),
+    Message { text: String, error: bool },
+}
+
+pub fn spawn_thx_worker(demo: bool, notify: Notify) -> (Sender<ThxCmd>, Receiver<ThxEvent>) {
+    let (cmd_tx, cmd_rx) = mpsc::channel();
+    let (ev_tx, ev_rx) = mpsc::channel();
+    thread::spawn(move || {
+        winaudio::com_init();
+        let mut w = ThxWorker {
+            demo,
+            tx: ev_tx,
+            notify,
+            status: ThxStatus::default(),
+            service: None,
+            last_problem: String::new(),
+        };
+        if demo {
+            w.status = ThxStatus { state: Some(demo_thx()), service: true, busy: false };
+            w.emit(ThxEvent::Status(w.status.clone()));
+        }
+        loop {
+            match cmd_rx.recv_timeout(THX_POLL) {
+                Ok(ThxCmd::Set(option, on)) => w.set(option, on),
+                Err(RecvTimeoutError::Timeout) => {}
+                Err(RecvTimeoutError::Disconnected) => break,
+            }
+            if !demo {
+                w.poll();
+            }
+        }
+    });
+    (cmd_tx, ev_rx)
+}
+
+struct ThxWorker {
+    demo: bool,
+    tx: Sender<ThxEvent>,
+    notify: Notify,
+    status: ThxStatus,
+    service: Option<thx::Service>,
+    /// Last problem logged, so a lasting one is logged once and not every poll.
+    last_problem: String,
+}
+
+impl ThxWorker {
+    fn emit(&self, ev: ThxEvent) {
+        let _ = self.tx.send(ev);
+        (self.notify)();
+    }
+
+    fn message(&self, text: String, error: bool) {
+        self.emit(ThxEvent::Message { text, error });
+    }
+
+    fn update(&mut self, status: ThxStatus) {
+        if status != self.status {
+            self.status = status;
+            self.emit(ThxEvent::Status(self.status.clone()));
+        }
+    }
+
+    fn problem(&mut self, text: String) {
+        if text != self.last_problem {
+            dlog!("THX: {text}");
+            self.last_problem = text;
+        }
+    }
+
+    /// The THX state of the headset's output, if THX is on it.
+    fn read(&mut self) -> Option<ThxState> {
+        let endpoint = winaudio::headset_endpoint(Flow::Render)?;
+        match thx::read_state(&endpoint.id)? {
+            Ok(s) => Some(s),
+            Err(e) => {
+                self.problem(e);
+                None
+            }
+        }
+    }
+
+    fn poll(&mut self) {
+        let state = self.read();
+        if state.is_some() && self.service.is_none() {
+            match thx::Service::connect() {
+                Ok(s) => self.service = Some(s),
+                Err(e) => self.problem(e),
+            }
+        }
+        let service = state.is_some() && self.service.is_some();
+        self.update(ThxStatus { state, service, busy: self.status.busy });
+    }
+
+    /// Switch an option, then wait until the service's stored state shows it.
+    fn set(&mut self, option: ThxOption, on: bool) {
+        dlog!("THX: {} → {on}", option.label());
+        if self.demo {
+            let mut status = self.status.clone();
+            if let Some(s) = &mut status.state {
+                option.set(s, on);
+            }
+            self.update(status);
+            return;
+        }
+        let Some(before) = self.status.state.clone() else { return };
+        // Show the requested value while waiting; a failure puts back the real one.
+        let mut pending = before.clone();
+        option.set(&mut pending, on);
+        self.update(ThxStatus { state: Some(pending), busy: true, ..self.status.clone() });
+
+        let result = match &self.service {
+            Some(service) => service.set(option, on),
+            None => Err("el servicio de THX no responde".to_string()),
+        };
+        let error = match result {
+            Ok(now) if now == on => self.confirm(option, on, before.sequence_number),
+            Ok(_) => Some("el servicio de THX no aceptó el cambio".to_string()),
+            Err(e) => {
+                // Reconnect next time: the service may have restarted.
+                self.service = None;
+                Some(e)
+            }
+        };
+        if let Some(e) = error {
+            dlog!("THX: {e}");
+            self.message(format!("{}: {e}", option.label()), true);
+        }
+        self.update(ThxStatus { busy: false, ..self.status.clone() });
+        self.poll();
+    }
+
+    /// Wait for the stored state to show the change. None when it does.
+    fn confirm(&mut self, option: ThxOption, on: bool, seq_before: u64) -> Option<String> {
+        let deadline = Instant::now() + THX_CONFIRM;
+        while Instant::now() < deadline {
+            thread::sleep(Duration::from_millis(250));
+            if let Some(s) = self.read() {
+                if s.sequence_number > seq_before && option.is_on(&s) == on {
+                    dlog!("THX: confirmado, secuencia {}", s.sequence_number);
+                    self.update(ThxStatus { state: Some(s), ..self.status.clone() });
+                    return None;
+                }
+            }
+        }
+        Some("el servicio aceptó el cambio pero su estado guardado no lo muestra".to_string())
+    }
+}
+
+fn demo_thx() -> ThxState {
+    ThxState {
+        sequence_number: 1,
+        preset_name: "Music Mode".into(),
+        spatial_enabled: false,
+        bass_boost_enabled: true,
+        bass_boost: 50.0,
+        drc_enabled: false,
+        drc_level: 100.0,
+        dialog_enhancement_enabled: false,
+        dialog_enhancement: 100.0,
+    }
 }
 
 fn demo_audio() -> AudioState {

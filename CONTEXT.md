@@ -78,4 +78,4 @@ _Evitar:_ decir solo "preset" cuando se habla de THX.
 
 **Estado de THX** (THX state): el JSON con todos los ajustes del motor THX (espacial, Bass Boost, normalización, claridad de voz, preset de THX, curva) que queda en el registro de la salida de los audífonos.
 
-**Servicio de THX** (THX service): `VSSrv.exe`, instalado con el paquete de driver de THX. Recibe los cambios de Synapse (por ZeroMQ) y guarda el estado de THX. No es un servicio de Razer.
+**Servicio de THX** (THX service): `VSSrv.exe`, instalado con el paquete de driver de THX. Recibe los cambios (Synapse por ZeroMQ, rzr por COM) y guarda el estado de THX. No es un servicio de Razer.

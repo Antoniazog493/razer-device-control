@@ -57,6 +57,11 @@
       autostart: true, debug_log: false, eq_method: "verified", release_remote: true,
       send_legacy_config: true, eq_status: 0, config_path: "C:\\Users\\tu\\AppData\\Roaming\\rzr\\config.json",
     },
+    thx: {
+      writable: true, busy: false, preset: "Música",
+      spatial: false, bass_boost: true, bass_boost_level: 50,
+      normalization: false, normalization_level: 100, voice_clarity: false, voice_clarity_level: 100,
+    },
     connlog: {
       drops_today: 1,
       lines: [
@@ -96,6 +101,9 @@
     sidetone_volume({ value }) { S.profile.sidetone_volume = value; },
     auto_off({ on }) { S.profile.auto_off_enabled = on; },
     auto_off_minutes({ value }) { S.profile.auto_off_minutes = value; },
+    thx_spatial({ on }) { S.thx.spatial = on; },
+    thx_bass_boost({ on }) { S.thx.bass_boost = on; },
+    thx_voice_clarity({ on }) { S.thx.voice_clarity = on; },
     volume({ id, value }) { S.audio[id].volume = value; },
     mute({ id, muted }) { S.audio[id].muted = muted; },
     default_device({ flow, id }) { S.audio[`default_${flow}`] = id; },

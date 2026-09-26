@@ -42,7 +42,7 @@ Comparación con OpenRazer (driver `razerblackshark`, [openrazer/openrazer#2862]
   pnputil /add-driver C:\thx\*.inf /install  # reinstalar sin Synapse
   ```
 
-- **Los ajustes de THX sí persisten sin Synapse.** Con Bass Boost al máximo, se siguió oyendo al cerrar Synapse y detener los servicios de Razer. _Fuente: captura `-Fase thx` (pasos 12 y 13), confirmado de oído por el usuario._ Falta saber si el **servicio de THX** también estaba corriendo: no se llama "THX" ni "Razer" y la captura no lo detectó.
+- **Los ajustes de THX sí persisten sin Synapse.** Con Bass Boost al máximo, se siguió oyendo al cerrar Synapse y detener los servicios de Razer. _Fuente: captura `-Fase thx` (pasos 12 y 13), confirmado de oído por el usuario._ El **servicio de THX** (`VSSrv`) no es de Razer y sigue corriendo sin Synapse (verificado el 2026-09-26). Falta saber si el efecto sigue sonando con `VSSrv` detenido.
 
 ### Dónde guarda THX sus ajustes
 
@@ -79,13 +79,31 @@ Ejemplo del JSON de `,6` (se reescribe entero en cada cambio):
 
 ### Cómo le llegan los ajustes a THX
 
+_Fuente: sesión local en la PC del usuario, 2026-09-26: textos y biblioteca de tipos de `VSSrv.exe` y de `ThxV3Native`, llamadas de prueba y confirmación de oído por el usuario._
+
 - Synapse usa `ThxV3Native` (versión 1.1.42.1), que trae `thxv3lib` 3.2.0.0 y **ZeroMQ 4.3.5**. Al iniciar "crea el cliente THX" y le envía llamadas como `SetRenderBassBoost`, `SetRenderBassBoostLevel`, `SetRenderNormalization`, `SetRenderVocalClarity`, `SetRenderSpatialProcessing`, `SetRenderPreset`, `SetRenderEQGains` (con `SetRenderBatch` 1/0 alrededor). _Fuente: `ThxV3NativeSubProcess.log`._
-- **Hipótesis principal:** el cliente habla por ZeroMQ con el **servicio de THX** (`VSSrv.exe`, del paquete `thxrtsvc.inf`), que escribe el estado en el registro del dispositivo, y el efecto (`THXOutAPO-SSE2-v3.dll` en `audiodg.exe`) lo lee de ahí. Escribir en esa clave de `HKLM` exige permisos de administrador o del sistema.
-- **Formas de controlarlo desde rzr**, de más limpia a menos:
-  1. `spatial-config-util.exe` (paquete `thxrtscu.inf`): utilidad de configuración de THX; hay que ver qué opciones acepta.
-  2. Hablarle al servicio por ZeroMQ como hace Synapse: hay que averiguar el formato de los mensajes.
-  3. Escribir `,6` y `,7` en el registro del dispositivo: requiere administrador y no se sabe si el efecto se entera sin el servicio.
-- La captura `-Fase thx-servicio` (solo lectura) reúne lo necesario para elegir: servicio y puertos, permisos de la clave, archivos de `C:\ProgramData\THX` y los textos de las utilidades de THX.
+- **El servicio de THX** es `VSSrv` (`C:\Windows\System32\VSSrv.exe`, v3.2.3.0): arranque automático, corre como `LocalSystem`. Escucha en `127.0.0.1:49671` (un socket `ROUTER` de ZeroMQ: acepta REQ y DEALER) y `127.0.0.1:49670` (un `PUB`). Guarda el estado y lo escribe en el registro del dispositivo: el efecto no habla con nadie por red (`audiodg.exe` no tiene conexiones a esos puertos).
+- **El servicio también es un servidor COM** con biblioteca de tipos (`VSSrvLib` 1.0, dentro de `VSSrv.exe`). La clase `VSSrv.CVSSrvTHXSettings` (`{2CCFC059-A1C5-4408-BCE5-0B23690DA7A2}`) implementa `IVSSrvTHXSettings` (`{3B3AF690-70A6-4DDA-BBEA-0B96493E9DA3}`), con `Init(procId)` y parejas `Get…`/`Set…`:
+
+  | Método | Qué cambia |
+  |---|---|
+  | `SetSpatialProcessingState(originator, enabled, …)` | `spatialEnabled` ✅ oído (sutil con música) |
+  | `SetBassBoostState(originator, enabled, …)` | `bassBoostEnabled` ✅ cambia el JSON |
+  | `SetDialogEnhanceState(originator, enabled, …)` | `dialogEnhancementEnabled` ✅ oído |
+  | `SetDRCLevel(originator, nivel, …)` | solo `drcLevel`; **no** activa la normalización |
+  | `SetProcessingMode`, `SetCurrentModeEQGains` (31 valores), `SetCustomRoomType`, `SetListeningMode`, `SetTiltEnabled`, `SetParam` | sin probar |
+
+  - Un usuario normal puede crear el objeto y llamarlo (sin administrador). Los `Get…` devolvieron exactamente lo mismo que el JSON.
+  - Tras un `Set…` el servicio reescribe `,6` y `,7` y sube `sequenceNumber`: entre 0,3 s y 3 s después. También lo publica en el `PUB` (tema `thx:sa:state`, con `x-originator:` y `x-payload:`).
+  - **Probado con Synapse cerrado:** Spatial activado por COM se oyó claramente; desde el panel de rzr se oyó Claridad de voz y Spatial se notó poco con música. Cada cambio del panel quedó confirmado en el JSON en menos de 1 s.
+  - Falta por COM: activar la **normalización** y cambiar los **niveles** (Bass Boost, claridad de voz). `GetParam` responde a los parámetros 1–3 (valores 1, 1, 0), sin saber qué son.
+- **ZeroMQ (lo que usa Synapse):** mensajes de varias partes, cada una con prefijo de texto: `x-originator:<nombre>` y `x-payload:<protobuf>` (y `x-Exception:` en errores). El protobuf es `thx.sa.THXMessage { Any msg = 1; string originator = 2; }`; el cliente se registra con `thx.sa.Register { uint32 pid = 1; }` y cambia ajustes enviando un `thx.sa.State` completo con `sequence_number` mayor que el actual.
+  - `thx.sa.State` es el mismo mensaje guardado en `,7` (tras 8 bytes de cabecera `VT_BLOB`). Campos: 1 `sequence_number`, 2 `spatial_enabled`, 3 `hardware_id`, 4 `output_device`, 5 `preset_name`, 6 `eq_curve`, 7 `tilt`, 8 `spatial_processing_mode`, 9 `drc_enabled`, 10 `drc_level`, 11 `emitter_positions`, 12 `room`, 13 `bass_boost`, 14 `dialog_enhancement`, 15 `upmix`, 16 `Headphones5`, 17 `bass_boost_enabled`, 18 `dialog_enhancement_enabled`.
+  - Enviando `Register` con ese formato (REQ y DEALER, con y sin `Init` previo por COM) el servicio **no respondió** y no cambió nada. Falta capturar una conversación real de Synapse (Wireshark + Npcap en loopback) para ver qué difiere.
+- **`spatial-config-util.exe` no sirve para los ajustes:** es un programa en Go que genera la configuración del dispositivo (`thx_spatial.conf.json`, filtros y presets en `C:\ProgramData\THX`). Sus opciones (`-usb`, `-hdaudio`, `-output-file`, `-writeout`, `-eq`, `-gameaux`…) no tocan Bass Boost ni los demás.
+- **Registro:** la clave `Properties` del dispositivo hereda permiso de escritura para `Users` (`SetValue`), así que escribir `,6` no requiere administrador. No se probó: el servicio es quien lo mantiene, y escribirlo por fuera podría desincronizarlo.
+- **Leer `,6` por `IPropertyStore` no sirve:** el almacén de propiedades del endpoint devuelve la cadena cortada en 259 caracteres (el JSON mide ~1 KB). rzr lo lee directamente del registro, lo que cualquier usuario puede hacer.
+- **Camino elegido:** la interfaz COM del servicio (ver [ADR 0004](adr/0004-thx-por-com.md)).
 
 ### Paquete de driver
 

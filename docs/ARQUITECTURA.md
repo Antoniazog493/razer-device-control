@@ -28,6 +28,7 @@ El panel y el proceso en segundo plano pueden correr a la vez: comparten el dong
           ▼  │
  worker.rs                              Hilo del headset (sondeo, eventos, escrituras)
                                         Hilo de audio de Windows (volumen, dispositivos)
+                                        Hilo de THX (estado y cambios por su servicio)
           │
  device.rs                              Secuencias: aplicar perfil, elegir preset, escribir curva
  protocol.rs                            Formato de los frames HID y tabla de comandos
@@ -44,7 +45,7 @@ Cada capa solo conoce a la de abajo. `protocol.rs` no sabe de hilos; `device.rs`
 | `src/main.rs` | Lee los argumentos y elige el modo. Contiene los bucles de `--watch` y `apply`. |
 | `src/protocol.rs` | Construye y analiza frames; constantes de comandos; presets, selectores y curvas de referencia. Sin E/S. |
 | `src/device.rs` | Abre el dongle y ejecuta secuencias con reintentos y verificación por lectura. Toma el candado del bus. |
-| `src/worker.rs` | Hilos del panel: el del headset (sondeo cada 5 s, eventos cada 250 ms, escrituras) y el de audio de Windows. Incluye el headset simulado de `--demo`. |
+| `src/worker.rs` | Hilos del panel: el del headset (sondeo cada 5 s, eventos cada 250 ms, escrituras), el de audio de Windows y el de THX. Incluye el headset simulado de `--demo`. |
 | `src/gui/mod.rs` | `App`, el controlador del panel: recibe `Msg` de la página, cambia la config, pide escrituras al hilo del headset y arma el estado (`App::view`). |
 | `src/gui/window.rs` | Ventana, WebView, protocolo `rzr://`, bucle de eventos, guardado diferido. |
 | `src/gui/assets.rs` | Archivos de `ui/` incluidos en el exe (o leídos de `RZR_UI_DIR`). |
@@ -52,6 +53,7 @@ Cada capa solo conoce a la de abajo. `protocol.rs` no sabe de hilos; `device.rs`
 | `src/config.rs` | Perfiles y ajustes; carga, valida (`sanitize`) y guarda `config.json`. |
 | `src/synapse.rs` | Importa perfiles `.synapse4`. |
 | `src/winaudio.rs` | Volumen, silencio, lista de dispositivos y dispositivo predeterminado de Windows. |
+| `src/thx.rs` | Estado de THX (el JSON del registro de la salida de los audífonos) y sus interruptores por la interfaz COM del servicio de THX ([ADR 0004](adr/0004-thx-por-com.md)). |
 | `src/connlog.rs` | Registro de caídas del enlace (`conexion.log`). |
 | `src/debuglog.rs` | Registro de depuración opcional (`debug.log`) y la macro `dlog!`. |
 | `src/instance.rs` | Mutex de instancia única del proceso en segundo plano y candado del bus. |
@@ -84,6 +86,7 @@ Ejemplo: el usuario elige el preset CS2.
 - **Hilo principal:** el bucle de eventos de la ventana (tao). Todo lo de `App` corre aquí; nunca se bloquea con E/S del headset.
 - **Hilo del headset:** único dueño del `Device`. Recibe `DevCmd` y agrupa los que llegan juntos (varios cambios se aplican una vez).
 - **Hilo de audio:** habla con Core Audio de Windows (COM). Cada 2 s envía el estado de volumen y dispositivos.
+- **Hilo de THX:** cada 2 s lee el estado de THX. Al cambiar una opción espera (hasta 6 s) a que el servicio de THX la guarde; va aparte para no frenar el volumen mientras tanto.
 - **Entre procesos:**
   - `Local\rzr_hid_bus`: candado alrededor de cada secuencia. El panel y el proceso en segundo plano tienen el dongle abierto a la vez; sin él, una consulta de uno puede cortar la escritura del otro.
   - `Global\rzr_blackshark_v2_pro`: garantiza un solo proceso en segundo plano. El panel lo consulta para no duplicar el registro de caídas.
@@ -114,6 +117,7 @@ Pruebas unitarias sin hardware (`cargo test`):
 - **Configuración:** validación de rangos y JSON incompleto.
 - **Importador de Synapse** y **migración del registro**.
 - **Registro de caídas.**
+- **THX:** análisis del estado (con un JSON escrito a mano) y la clave del registro de cada salida.
 - **Comandos de la página** y **archivos servidos.**
 - **Flujo de la prueba guiada.**
 

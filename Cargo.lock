@@ -1725,6 +1725,7 @@ dependencies = [
  "serde_json",
  "tao",
  "windows",
+ "windows-core",
  "winreg",
  "wry",
 ]

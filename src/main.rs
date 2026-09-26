@@ -11,6 +11,7 @@ mod instance;
 mod protocol;
 mod registry;
 mod synapse;
+mod thx;
 mod winaudio;
 mod worker;
 

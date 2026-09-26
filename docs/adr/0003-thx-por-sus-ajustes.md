@@ -1,6 +1,6 @@
 # 0003. THX se controla escribiendo sus ajustes, sin redistribuir su driver
 
-- Estado: Aceptada. Lugar de los ajustes encontrado; falta elegir cómo escribirlos (captura `-Fase thx-servicio`)
+- Estado: Aceptada. Cómo escribir los ajustes: [ADR 0004](0004-thx-por-com.md)
 - Fecha: 2026-09-26
 
 ## Contexto

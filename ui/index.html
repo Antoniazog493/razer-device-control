@@ -142,17 +142,28 @@
       <p class="faint">Nota: solo aplica cuando el headset está conectado al dongle inalámbrico y emparejado con tu móvil a la vez.</p>
     </section>
 
-    <section class="card unavailable">
-      <header><h2>MEJORAS DE SONIDO (THX)</h2></header>
-      <ul class="features">
-        <li><span class="toggle" aria-disabled="true"></span>BASS BOOST</li>
-        <li><span class="toggle" aria-disabled="true"></span>NORMALIZACIÓN DE SONIDO</li>
-        <li><span class="toggle" aria-disabled="true"></span>CLARIDAD DE VOZ</li>
-        <li><span class="toggle" aria-disabled="true"></span>THX SPATIAL AUDIO</li>
-      </ul>
-      <p class="dim">Las hace el motor de THX que Synapse instala en Windows (un efecto de audio), no el headset. rzr podrá controlarlas cuando sepamos dónde guarda THX sus ajustes.</p>
+    <section class="card" id="thx">
+      <header>
+        <h2>MEJORAS DE SONIDO (THX)</h2>
+        <span class="busy" data-show="thx.busy"><span class="spinner"></span></span>
+        <span class="help" data-tip="Las hace el motor de THX que Synapse instala en Windows (un efecto de audio), no el headset. Se aplican a todo lo que suena por los auriculares y no forman parte del perfil.">?</span>
+      </header>
+      <div data-show="thx">
+        <ul class="features live">
+          <li><button class="toggle" data-toggle="thx.bass_boost" data-send="thx_bass_boost" data-thx></button>BASS BOOST<span class="level">nivel <span data-text="thx.bass_boost_level"></span></span></li>
+          <li><span class="toggle" data-toggle="thx.normalization" aria-disabled="true"></span>NORMALIZACIÓN DE SONIDO<span class="level">nivel <span data-text="thx.normalization_level"></span></span></li>
+          <li><button class="toggle" data-toggle="thx.voice_clarity" data-send="thx_voice_clarity" data-thx></button>CLARIDAD DE VOZ<span class="level">nivel <span data-text="thx.voice_clarity_level"></span></span></li>
+          <li><button class="toggle" data-toggle="thx.spatial" data-send="thx_spatial" data-thx></button>THX SPATIAL AUDIO</li>
+        </ul>
+        <p class="dim">Preset de THX: <span data-text="thx.preset"></span></p>
+        <p class="faint">La normalización y los niveles se ven aquí, pero por ahora solo se cambian desde Synapse.</p>
+        <p class="faint" data-show="!thx.writable">No se puede hablar con el servicio de THX (VSSrv): los ajustes se muestran pero no se pueden cambiar.</p>
+      </div>
+      <div data-show="!thx">
+        <p class="dim">No se encontró THX en la salida de los auriculares. Lo instala Razer Synapse; después ya no hace falta tenerlo abierto.</p>
+        <p class="faint">Sin THX, Windows ofrece sus propias mejoras (Bass Boost, Loudness Equalization, sonido envolvente virtual): Panel de sonido › Reproducción › BlackShark › Propiedades › Mejoras.</p>
+      </div>
       <p class="faint">Si THX no suena: en el Panel de sonido, los auriculares BlackShark deben tener las mejoras de audio activadas y el audio espacial de Windows (Windows Sonic) desactivado.</p>
-      <p class="faint">Sin Synapse, Windows ofrece sus propias mejoras (Bass Boost, Loudness Equalization, sonido envolvente virtual): Panel de sonido › Reproducción › BlackShark › Propiedades › Mejoras.</p>
       <button class="link external" data-open="sound">Abrir Panel de sonido</button>
     </section>
   </div>

@@ -30,7 +30,8 @@ Al conectar los BlackShark V2 Pro sin Synapse, el audio suena bajo y plano: los 
 | Varios perfiles, importar perfiles de Synapse (`.synapse4`) | rzr | ✅ |
 | Iniciar con Windows y aplicar el perfil al conectar/reconectar | rzr | ✅ |
 | Registro de caídas de conexión (hora y duración de cada corte) | rzr | ✅ |
-| Bass Boost, Normalización de sonido, Claridad de voz, THX Spatial Audio | Motor THX en el PC (instalado por Synapse) | ❌ ver abajo |
+| Bass Boost, Claridad de voz y THX Spatial Audio (activar/desactivar), preset de THX | Motor THX en el PC (instalado por Synapse; no hace falta abrirlo) | ✅ ver abajo |
+| Normalización de sonido y niveles de Bass Boost / Claridad de voz | Motor THX en el PC | Solo se muestran; se cambian en Synapse |
 | EQ de micrófono, normalización, claridad vocal, reducción de ruido, puerta de voz | Software de Synapse en el PC | ❌ ver abajo |
 
 ### ¿Por qué faltan algunas funciones de Synapse?
@@ -41,7 +42,7 @@ Esas mejoras **no las hace el headset**. Una captura de los logs de Synapse 4 co
 - Bass Boost, Normalización, Claridad de voz y THX Spatial Audio se aplican con `AudioEffectsTHXV3.setRender…`, es decir, en el **motor de audio de THX**. Synapse lo instala en Windows como efecto de audio ("THX Spatial Audio (BlackShark V2 Pro)") y **reemplaza** a los efectos de Windows que traían los audífonos ("Microsoft Audio Home Theater Effects").
 - Las mejoras de micrófono tampoco usan USB: sin THX instalado no hacen nada; con THX, también van a su motor.
 
-El efecto de THX queda instalado en Windows como un APO (se carga en `audiodg.exe`) y **sigue sonando con Synapse cerrado**. Sus ajustes están en el registro de la salida de los audífonos (un JSON con Bass Boost, normalización, claridad de voz, sonido espacial y la curva; ver [docs/HALLAZGOS.md](docs/HALLAZGOS.md#thx-spatial-audio)), así que rzr podrá mostrarlos y, cuando se sepa cómo los recibe el efecto, cambiarlos. `tools/capturar-synapse.ps1 -Fase thx-servicio` reúne lo que falta para eso.
+El efecto de THX queda instalado en Windows como un APO (se carga en `audiodg.exe`) y **sigue sonando con Synapse cerrado**. Sus ajustes los guarda el **servicio de THX** (`VSSrv.exe`, parte del paquete de driver de THX, no de Razer) en el registro de la salida de los audífonos. rzr los lee de ahí y cambia Bass Boost, Claridad de voz y THX Spatial Audio por la interfaz COM de ese servicio, sin Synapse y sin administrador. La normalización y los niveles todavía no: por COM no se puede y el protocolo que usa Synapse (ZeroMQ) aún no se entiende del todo. Detalle en [docs/HALLAZGOS.md](docs/HALLAZGOS.md#cómo-le-llegan-los-ajustes-a-thx) y [ADR 0004](docs/adr/0004-thx-por-com.md).
 
 Sin Synapse, los audífonos vuelven a usar los efectos de Windows, que incluyen **Bass Boost, Loudness Equalization (normalización) y sonido envolvente virtual**. rzr podrá controlarlos una vez identificados sus ajustes: `tools/capturar-synapse.ps1 -Fase windows` los captura. Para el micrófono, las alternativas son [Equalizer APO](https://sourceforge.net/projects/equalizerapo/) (EQ) o NVIDIA Broadcast / RNNoise (reducción de ruido).
 
