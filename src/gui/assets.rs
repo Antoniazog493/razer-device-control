@@ -1,6 +1,6 @@
-/// The page's files (ui/), built into the exe. With the RZR_UI_DIR
-/// environment variable set to a folder, they are read from there instead,
-/// so the page can be edited and reloaded (F5) without rebuilding.
+//! The page's files (ui/), built into the exe. With the RZR_UI_DIR
+//! environment variable set to a folder, they are read from there instead,
+//! so the page can be edited and reloaded (F5) without rebuilding.
 
 use std::borrow::Cow;
 
@@ -37,10 +37,7 @@ pub fn get(path: &str) -> Option<(&'static str, Cow<'static, [u8]>)> {
             .ok()
             .map(|bytes| (content_type(name), Cow::Owned(bytes)));
     }
-    FILES
-        .iter()
-        .find(|(n, _)| *n == name)
-        .map(|(n, text)| (content_type(n), Cow::Borrowed(text.as_bytes())))
+    FILES.iter().find(|(n, _)| *n == name).map(|(n, text)| (content_type(n), Cow::Borrowed(text.as_bytes())))
 }
 
 #[cfg(test)]

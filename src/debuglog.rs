@@ -1,9 +1,9 @@
-/// Optional debug log (debug.log next to the config), off by default.
-///
-/// When enabled it records every HID frame sent to and received from the
-/// dongle, plus what the app was doing at the time, so a problem on the
-/// user's machine can be diagnosed from the file alone. Turned on from
-/// AJUSTES, with `--debug`, or with the RZR_DEBUG environment variable.
+//! Optional debug log (debug.log next to the config), off by default.
+//!
+//! When enabled it records every HID frame sent to and received from the
+//! dongle, plus what the app was doing at the time, so a problem on the
+//! user's machine can be diagnosed from the file alone. Turned on from
+//! AJUSTES, with `--debug`, or with the RZR_DEBUG environment variable.
 
 use std::fs::OpenOptions;
 use std::io::Write;

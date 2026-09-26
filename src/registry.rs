@@ -1,5 +1,5 @@
-/// Windows registry: migration of the pre-GUI settings (HKCU\SOFTWARE\rzr)
-/// and the "start with Windows" entry (HKCU\...\CurrentVersion\Run).
+//! Windows registry: migration of the pre-GUI settings (HKCU\SOFTWARE\rzr)
+//! and the "start with Windows" entry (HKCU\...\CurrentVersion\Run).
 
 use crate::config::Config;
 
@@ -9,9 +9,7 @@ pub fn legacy_config() -> Option<Config> {
     use winreg::enums::*;
     use winreg::RegKey;
 
-    let key = RegKey::predef(HKEY_CURRENT_USER)
-        .open_subkey("SOFTWARE\\rzr")
-        .ok()?;
+    let key = RegKey::predef(HKEY_CURRENT_USER).open_subkey("SOFTWARE\\rzr").ok()?;
     let mut cfg = Config::default();
 
     if let Ok(v) = key.get_value::<String, _>("eq_bands") {
@@ -61,10 +59,7 @@ const RUN_VALUE: &str = "rzr";
 pub fn autostart_enabled() -> bool {
     use winreg::enums::*;
     use winreg::RegKey;
-    RegKey::predef(HKEY_CURRENT_USER)
-        .open_subkey(RUN_KEY)
-        .and_then(|k| k.get_value::<String, _>(RUN_VALUE))
-        .is_ok()
+    RegKey::predef(HKEY_CURRENT_USER).open_subkey(RUN_KEY).and_then(|k| k.get_value::<String, _>(RUN_VALUE)).is_ok()
 }
 
 #[cfg(windows)]
@@ -77,8 +72,7 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
     if enable {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let cmd = format!("\"{}\" --silent --watch", exe.display());
-        key.set_value(RUN_VALUE, &cmd)
-            .map_err(|e| format!("No se pudo escribir en el registro: {e}"))
+        key.set_value(RUN_VALUE, &cmd).map_err(|e| format!("No se pudo escribir en el registro: {e}"))
     } else {
         match key.delete_value(RUN_VALUE) {
             Ok(()) => Ok(()),
@@ -102,10 +96,7 @@ pub fn set_autostart(_enable: bool) -> Result<(), String> {
 mod tests {
     #[test]
     fn parses_legacy_bands() {
-        assert_eq!(
-            super::parse_eq_bands("1,-2,1,-3,1,-3,-5,2,2,3"),
-            Some([1, -2, 1, -3, 1, -3, -5, 2, 2, 3])
-        );
+        assert_eq!(super::parse_eq_bands("1,-2,1,-3,1,-3,-5,2,2,3"), Some([1, -2, 1, -3, 1, -3, -5, 2, 2, 3]));
         assert_eq!(super::parse_eq_bands("1,2"), None);
     }
 }

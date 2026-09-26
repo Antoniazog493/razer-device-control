@@ -1,12 +1,12 @@
-/// Guided EQ test: sends contrasting EQ settings with each way of talking to
-/// the headset, asks the user whether they hear the difference, and keeps
-/// the first way that works. Every frame goes to debug.log meanwhile.
-///
-/// Round 1 (on the user's headset) found that a curve written into Custom
-/// is stored and read back exactly, yet not heard, while switching between
-/// the built-in presets is heard. Round 2 tests why.
-///
-/// This is the test's logic only; the page draws it from `view()`.
+//! Guided EQ test: sends contrasting EQ settings with each way of talking to
+//! the headset, asks the user whether they hear the difference, and keeps
+//! the first way that works. Every frame goes to debug.log meanwhile.
+//!
+//! Round 1 (on the user's headset) found that a curve written into Custom
+//! is stored and read back exactly, yet not heard, while switching between
+//! the built-in presets is heard. Round 2 tests why.
+//!
+//! This is the test's logic only; the page draws it from `view()`.
 
 use serde_json::{json, Value};
 
@@ -90,7 +90,9 @@ pub struct Outcome {
 impl Kind {
     fn actions(self) -> [(&'static str, DiagAction); 2] {
         match self {
-            Kind::Relatch => [("A · GRAVES", DiagAction::CurveRelatch(BASS)), ("B · AGUDOS", DiagAction::CurveRelatch(TREBLE))],
+            Kind::Relatch => {
+                [("A · GRAVES", DiagAction::CurveRelatch(BASS)), ("B · AGUDOS", DiagAction::CurveRelatch(TREBLE))]
+            }
             Kind::EsportsSelect => [
                 ("A · APEX LEGENDS", DiagAction::Select(EqPreset::ApexLegends)),
                 ("B · CS2", DiagAction::Select(EqPreset::Csgo)),
@@ -99,7 +101,9 @@ impl Kind {
                 ("A · GRAVES", DiagAction::SlotCurve(EqPreset::ApexLegends, BASS)),
                 ("B · AGUDOS", DiagAction::SlotCurve(EqPreset::ApexLegends, TREBLE)),
             ],
-            Kind::Loudness => [("A · PLANO", DiagAction::CurveRelatch(FLAT)), ("B · −9 dB", DiagAction::CurveRelatch(QUIET))],
+            Kind::Loudness => {
+                [("A · PLANO", DiagAction::CurveRelatch(FLAT)), ("B · −9 dB", DiagAction::CurveRelatch(QUIET))]
+            }
         }
     }
 }

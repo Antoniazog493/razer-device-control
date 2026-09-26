@@ -65,12 +65,7 @@ fn main() {
         return;
     }
 
-    let positional: Vec<&str> = args
-        .iter()
-        .skip(1)
-        .filter(|a| !a.starts_with('-'))
-        .map(|s| s.as_str())
-        .collect();
+    let positional: Vec<&str> = args.iter().skip(1).filter(|a| !a.starts_with('-')).map(|s| s.as_str()).collect();
 
     let cmd = positional.first().copied();
 

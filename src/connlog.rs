@@ -1,5 +1,5 @@
-/// Log of headset link drops, kept next to the config as conexion.log, to
-/// help pin down intermittent disconnects.
+//! Log of headset link drops, kept next to the config as conexion.log, to
+//! help pin down intermittent disconnects.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -82,20 +82,14 @@ fn trim(path: &PathBuf) {
 
 /// The last `n` lines, newest first.
 pub fn recent(n: usize) -> Vec<String> {
-    std::fs::read_to_string(path())
-        .map(|t| t.lines().rev().take(n).map(str::to_string).collect())
-        .unwrap_or_default()
+    std::fs::read_to_string(path()).map(|t| t.lines().rev().take(n).map(str::to_string).collect()).unwrap_or_default()
 }
 
 /// Drops logged today.
 pub fn drops_today() -> usize {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     std::fs::read_to_string(path())
-        .map(|t| {
-            t.lines()
-                .filter(|l| l.starts_with(&today) && l.contains("DESCONECTADO"))
-                .count()
-        })
+        .map(|t| t.lines().filter(|l| l.starts_with(&today) && l.contains("DESCONECTADO")).count())
         .unwrap_or(0)
 }
 

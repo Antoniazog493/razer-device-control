@@ -1,6 +1,6 @@
-/// The window: a system WebView (WebView2 on Windows, WebKitGTK elsewhere)
-/// showing ui/index.html. The page posts JSON messages (`window.ipc`); rzr
-/// answers by calling `rzr.state(...)` and `rzr.toast(...)` in the page.
+//! The window: a system WebView (WebView2 on Windows, WebKitGTK elsewhere)
+//! showing ui/index.html. The page posts JSON messages (`window.ipc`); rzr
+//! answers by calling `rzr.state(...)` and `rzr.toast(...)` in the page.
 
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -68,10 +68,7 @@ pub fn run(demo: bool) -> Result<(), String> {
     #[cfg(windows)]
     let webview = {
         use wry::WebViewBuilderExtWindows;
-        builder
-            .with_browser_accelerator_keys(false)
-            .with_default_context_menus(false)
-            .build(&window)
+        builder.with_browser_accelerator_keys(false).with_default_context_menus(false).build(&window)
     };
     #[cfg(not(windows))]
     let webview = {

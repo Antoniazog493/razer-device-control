@@ -1,29 +1,29 @@
-/// Audio MXIC ("PA") protocol for the Razer BlackShark V2 Pro 2.4 dongle (1532:0555).
-///
-/// Every command is a 64-byte HID report (report id 0x02):
-///
-/// ```text
-///   [0]  0x02       report id
-///   [1]  0x80       direction (host -> device)
-///   [2]  total_len  8 + payload length
-///   [5]  0x50 'P'
-///   [6]  0x41 'A'
-///   [7]  inner_len  0x08 (0x0E for the remote-mode frame)
-///   [9]  cmd_type   0x02 remote, 0x03 query, 0x04 audio write, 0x0D EQ write
-///   [10] cmd_id
-///   [11] flag       0 in a request
-///   [12] data_len
-///   [13] data...
-/// ```
-///
-/// Replies are one or more "PI" frames packed after [0]=report id and
-/// [1]=total length. Each frame is 'P' 'I', eight header bytes, then
-/// cmd id, flag (0x01 = ACK of a request, 0x02 = unsolicited event), data
-/// length and data. The first frame puts the cmd id at [12].
-///
-/// Command table cross-checked against the OpenRazer driver for this exact
-/// device (openrazer/openrazer#2862), which verified each register on
-/// hardware, and against Synapse 4's own logs (names in quotes below).
+//! Audio MXIC ("PA") protocol for the Razer BlackShark V2 Pro 2.4 dongle (1532:0555).
+//!
+//! Every command is a 64-byte HID report (report id 0x02):
+//!
+//! ```text
+//!   [0]  0x02       report id
+//!   [1]  0x80       direction (host -> device)
+//!   [2]  total_len  8 + payload length
+//!   [5]  0x50 'P'
+//!   [6]  0x41 'A'
+//!   [7]  inner_len  0x08 (0x0E for the remote-mode frame)
+//!   [9]  cmd_type   0x02 remote, 0x03 query, 0x04 audio write, 0x0D EQ write
+//!   [10] cmd_id
+//!   [11] flag       0 in a request
+//!   [12] data_len
+//!   [13] data...
+//! ```
+//!
+//! Replies are one or more "PI" frames packed after [0]=report id and
+//! [1]=total length. Each frame is 'P' 'I', eight header bytes, then
+//! cmd id, flag (0x01 = ACK of a request, 0x02 = unsolicited event), data
+//! length and data. The first frame puts the cmd id at [12].
+//!
+//! Command table cross-checked against the OpenRazer driver for this exact
+//! device (openrazer/openrazer#2862), which verified each register on
+//! hardware, and against Synapse 4's own logs (names in quotes below).
 
 pub const PKT_SIZE: usize = 64;
 pub type Packet = [u8; PKT_SIZE];
@@ -68,9 +68,8 @@ pub const CMD_AUTO_OFF: u8 = 0xAC; // auto power-off minutes, 0 = off
 pub const CMD_REMOTE: u8 = 0xE1;
 
 pub const EQ_BANDS: usize = 10;
-pub const EQ_FREQS: [&str; EQ_BANDS] = [
-    "31Hz", "63Hz", "125Hz", "250Hz", "500Hz", "1kHz", "2kHz", "4kHz", "8kHz", "16kHz",
-];
+pub const EQ_FREQS: [&str; EQ_BANDS] =
+    ["31Hz", "63Hz", "125Hz", "250Hz", "500Hz", "1kHz", "2kHz", "4kHz", "8kHz", "16kHz"];
 /// Range Synapse offers for this headset's EQ.
 pub const EQ_MIN_DB: i8 = -5;
 pub const EQ_MAX_DB: i8 = 5;
@@ -170,11 +169,7 @@ pub fn frames(buf: &[u8]) -> Vec<Frame<'_>> {
     while off + 13 <= end && buf[off] == b'P' && buf[off + 1] == b'I' {
         let len = buf[off + 12] as usize;
         let start = off + 13;
-        out.push(Frame {
-            cmd: buf[off + 10],
-            flag: buf[off + 11],
-            data: &buf[start..(start + len).min(end)],
-        });
+        out.push(Frame { cmd: buf[off + 10], flag: buf[off + 11], data: &buf[start..(start + len).min(end)] });
         off = start + len;
     }
     out
@@ -183,17 +178,12 @@ pub fn frames(buf: &[u8]) -> Vec<Frame<'_>> {
 /// Payload of the ACK to `cmd_id`, if `buf` carries one. Matching the ACK
 /// flag skips the unsolicited event frames the headset also sends.
 pub fn parse_reply(buf: &[u8], cmd_id: u8) -> Option<&[u8]> {
-    frames(buf)
-        .into_iter()
-        .find(|f| f.cmd == cmd_id && f.flag == FLAG_ACK)
-        .map(|f| f.data)
+    frames(buf).into_iter().find(|f| f.cmd == cmd_id && f.flag == FLAG_ACK).map(|f| f.data)
 }
 
 /// Dongle firmware version ("2.4.1.0") from the reply to get_dongle_firmware().
 pub fn parse_dongle_firmware(buf: &[u8]) -> Option<String> {
-    let f = frames(buf)
-        .into_iter()
-        .find(|f| f.cmd == CMD_DONGLE_FIRMWARE && f.flag == 0xC2 && f.data.len() >= 4)?;
+    let f = frames(buf).into_iter().find(|f| f.cmd == CMD_DONGLE_FIRMWARE && f.flag == 0xC2 && f.data.len() >= 4)?;
     Some(f.data[..4].iter().map(|b| b.to_string()).collect::<Vec<_>>().join("."))
 }
 
@@ -220,13 +210,8 @@ pub enum EqPreset {
 
 impl EqPreset {
     pub const STANDARD: [EqPreset; 4] = [Self::Game, Self::Movie, Self::Music, Self::Custom];
-    pub const ESPORTS: [EqPreset; 5] = [
-        Self::ApexLegends,
-        Self::CallOfDuty,
-        Self::Csgo,
-        Self::Fortnite,
-        Self::Valorant,
-    ];
+    pub const ESPORTS: [EqPreset; 5] =
+        [Self::ApexLegends, Self::CallOfDuty, Self::Csgo, Self::Fortnite, Self::Valorant];
 
     /// Selector byte for cmd 0x93. Esports ids follow Synapse's list order.
     pub fn selector(self) -> u8 {
@@ -244,11 +229,7 @@ impl EqPreset {
     }
 
     pub fn from_selector(sel: u8) -> Option<Self> {
-        Self::STANDARD
-            .iter()
-            .chain(Self::ESPORTS.iter())
-            .copied()
-            .find(|p| p.selector() == sel)
+        Self::STANDARD.iter().chain(Self::ESPORTS.iter()).copied().find(|p| p.selector() == sel)
     }
 
     pub fn is_esports(self) -> bool {
@@ -341,22 +322,19 @@ mod tests {
     fn parses_captured_replies() {
         // getBatteryStatus -> 55%. Trailing bytes are stale buffer contents.
         let battery = report(&[
-            0x02, 0x0E, 0x50, 0x49, 0x08, 0xD5, 0xCD, 0x1D, 0x00, 0x00, 0x04, 0x00, 0x21, 0x01,
-            0x01, 0x37, 0x49, 0x01, 0xC0, 0x22,
+            0x02, 0x0E, 0x50, 0x49, 0x08, 0xD5, 0xCD, 0x1D, 0x00, 0x00, 0x04, 0x00, 0x21, 0x01, 0x01, 0x37, 0x49, 0x01,
+            0xC0, 0x22,
         ]);
         assert_eq!(parse_reply(&battery, CMD_BATTERY), Some(&[55u8][..]));
         assert_eq!(parse_reply(&battery, CMD_CHARGING), None);
 
         // The transport-level echo that precedes each reply is not an ACK.
-        let echo = report(&[
-            0x02, 0x0D, 0x50, 0x49, 0x01, 0xC0, 0xFE, 0x5B, 0xEF, 0x00, 0x03, 0x00, 0x0E, 0x80,
-        ]);
+        let echo = report(&[0x02, 0x0D, 0x50, 0x49, 0x01, 0xC0, 0xFE, 0x5B, 0xEF, 0x00, 0x03, 0x00, 0x0E, 0x80]);
         assert!(frames(&echo).iter().all(|f| f.flag != FLAG_ACK));
 
         // Set Not Disturb ACK packed together with a DND-changed event.
         let dnd = report(&[
-            2, 28, 80, 73, 8, 212, 12, 125, 3, 0, 4, 0, 167, 1, 1, 0, 80, 73, 8, 213, 12, 125, 3,
-            0, 4, 0, 39, 2, 1, 1,
+            2, 28, 80, 73, 8, 212, 12, 125, 3, 0, 4, 0, 167, 1, 1, 0, 80, 73, 8, 213, 12, 125, 3, 0, 4, 0, 39, 2, 1, 1,
         ]);
         let f = frames(&dnd);
         assert_eq!(f.len(), 2);
@@ -366,8 +344,8 @@ mod tests {
 
         // Get Dongle Firmware Version -> 2.4.1.0
         let fw = report(&[
-            0x02, 0x11, 0x50, 0x49, 0x08, 0xD6, 0x87, 0x5D, 0xEF, 0x00, 0x07, 0x00, 0x01, 0xC2,
-            0x04, 0x02, 0x04, 0x01, 0x00,
+            0x02, 0x11, 0x50, 0x49, 0x08, 0xD6, 0x87, 0x5D, 0xEF, 0x00, 0x07, 0x00, 0x01, 0xC2, 0x04, 0x02, 0x04, 0x01,
+            0x00,
         ]);
         assert_eq!(parse_dongle_firmware(&fw).as_deref(), Some("2.4.1.0"));
     }

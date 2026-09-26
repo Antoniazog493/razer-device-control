@@ -1,5 +1,5 @@
-/// Background threads for the GUI: one owns the HID device (writes can take
-/// a second, and the link needs polling), one talks to Windows audio.
+//! Background threads for the GUI: one owns the HID device (writes can take
+//! a second, and the link needs polling), one talks to Windows audio.
 
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, Sender};
 use std::sync::Arc;
@@ -96,19 +96,21 @@ pub struct DeviceInfo {
 
 pub enum DevEvent {
     Info(DeviceInfo),
-    Message { text: String, error: bool },
+    Message {
+        text: String,
+        error: bool,
+    },
     /// The headset is playing a different preset than the profile says:
     /// its EQ button switched it, or our write didn't take.
-    PresetChanged { preset: EqPreset, from_button: bool },
+    PresetChanged {
+        preset: EqPreset,
+        from_button: bool,
+    },
     /// Result of a guided-test step: what the headset reports afterwards.
     Diag(String),
 }
 
-pub fn spawn_device_worker(
-    target: Target,
-    demo: bool,
-    notify: Notify,
-) -> (Sender<DevCmd>, Receiver<DevEvent>) {
+pub fn spawn_device_worker(target: Target, demo: bool, notify: Notify) -> (Sender<DevCmd>, Receiver<DevEvent>) {
     let (cmd_tx, cmd_rx) = mpsc::channel();
     let (ev_tx, ev_rx) = mpsc::channel();
     thread::spawn(move || {
@@ -173,11 +175,7 @@ impl DevWorker {
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     self.poll();
-                    let every = if self.info.status.headset_connected {
-                        POLL_CONNECTED
-                    } else {
-                        POLL_DISCONNECTED
-                    };
+                    let every = if self.info.status.headset_connected { POLL_CONNECTED } else { POLL_DISCONNECTED };
                     next_poll = Instant::now() + every;
                 }
                 Err(RecvTimeoutError::Disconnected) => break,
@@ -483,10 +481,7 @@ impl DevWorker {
         // Preset switched from the headset's EQ button, or our write
         // didn't take? Either way, show what the headset really plays.
         if let Some(p) = self.info.status.preset {
-            if connected
-                && self.last_write.elapsed() > PRESET_SETTLE
-                && p != self.target.profile.active_preset()
-            {
+            if connected && self.last_write.elapsed() > PRESET_SETTLE && p != self.target.profile.active_preset() {
                 let from_button = std::mem::take(&mut self.button_preset);
                 dlog!(
                     "el headset está en {p:?}, el perfil dice {:?} (botón: {from_button})",
@@ -515,9 +510,9 @@ pub fn apply_default_devices(t: &Target) -> bool {
 // Windows audio
 
 pub enum AudioCmd {
-    SetVolume(String, f32),
-    SetMute(String, bool),
-    SetDefault(String),
+    Volume(String, f32),
+    Mute(String, bool),
+    DefaultDevice(String),
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -544,17 +539,17 @@ pub fn spawn_audio_worker(demo: bool, notify: Notify) -> (Sender<AudioCmd>, Rece
                     let mut volumes: Vec<(String, f32)> = Vec::new();
                     for cmd in batch {
                         match cmd {
-                            AudioCmd::SetVolume(id, v) => {
+                            AudioCmd::Volume(id, v) => {
                                 volumes.retain(|(i, _)| *i != id);
                                 volumes.push((id, v));
                             }
-                            AudioCmd::SetMute(id, m) => match &mut demo_state {
+                            AudioCmd::Mute(id, m) => match &mut demo_state {
                                 Some(s) => demo_update(s, &id, |e| e.muted = m),
                                 None => {
                                     winaudio::set_mute(&id, m);
                                 }
                             },
-                            AudioCmd::SetDefault(id) => {
+                            AudioCmd::DefaultDevice(id) => {
                                 if demo_state.is_none() {
                                     winaudio::set_default_device(&id);
                                 }
@@ -600,11 +595,8 @@ fn demo_audio() -> AudioState {
         id: "demo-out".into(),
         is_default: true,
     };
-    let inp = AudioDevice {
-        name: "Micrófono (Razer BlackShark V2 Pro 2.4)".into(),
-        id: "demo-in".into(),
-        is_default: true,
-    };
+    let inp =
+        AudioDevice { name: "Micrófono (Razer BlackShark V2 Pro 2.4)".into(), id: "demo-in".into(), is_default: true };
     AudioState {
         outputs: vec![
             out.clone(),

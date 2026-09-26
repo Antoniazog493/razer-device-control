@@ -1,7 +1,7 @@
-/// Import of Razer Synapse 4 profile exports (*.synapse4).
-///
-/// The file is JSON: { deviceName, profiles: [{ name, payload }] } where each
-/// payload is base64-encoded JSON with the profile's settings.
+//! Import of Razer Synapse 4 profile exports (*.synapse4).
+//!
+//! The file is JSON: { deviceName, profiles: [{ name, payload }] } where each
+//! payload is base64-encoded JSON with the profile's settings.
 
 use base64::Engine;
 use serde_json::Value;
@@ -16,19 +16,14 @@ pub fn import_file(path: &std::path::Path) -> Result<Vec<Profile>, String> {
 
 pub fn import_str(text: &str) -> Result<Vec<Profile>, String> {
     let root: Value = serde_json::from_str(text).map_err(|_| "No es un archivo .synapse4 válido".to_string())?;
-    let entries = root["profiles"]
-        .as_array()
-        .ok_or("El archivo no contiene perfiles")?;
+    let entries = root["profiles"].as_array().ok_or("El archivo no contiene perfiles")?;
 
     let mut out = Vec::new();
     for entry in entries {
         let Some(b64) = entry["payload"].as_str() else { continue };
         let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(b64.trim()) else { continue };
         let Ok(payload) = serde_json::from_slice::<Value>(&bytes) else { continue };
-        let name = payload["name"]
-            .as_str()
-            .or_else(|| entry["name"].as_str())
-            .unwrap_or("Synapse");
+        let name = payload["name"].as_str().or_else(|| entry["name"].as_str()).unwrap_or("Synapse");
         out.push(profile_from_payload(name, &payload));
     }
 
@@ -66,10 +61,7 @@ fn bands(v: &Value) -> Option<[i8; EQ_BANDS]> {
 }
 
 fn profile_from_payload(name: &str, p: &Value) -> Profile {
-    let mut prof = Profile {
-        name: name.to_string(),
-        ..Profile::default()
-    };
+    let mut prof = Profile { name: name.to_string(), ..Profile::default() };
 
     let eq = &p["audioEqualizer"];
     if eq["selectedMode"].as_str() == Some("esports") {
@@ -113,7 +105,9 @@ mod tests {
 
     fn export(payload: &str) -> String {
         let b64 = base64::engine::general_purpose::STANDARD.encode(payload);
-        format!(r#"{{"productId":1365,"deviceName":"Razer BlackShark V2 Pro","category":"AUDIO","profiles":[{{"name":"EQP","payload":"{b64}"}}]}}"#)
+        format!(
+            r#"{{"productId":1365,"deviceName":"Razer BlackShark V2 Pro","category":"AUDIO","profiles":[{{"name":"EQP","payload":"{b64}"}}]}}"#
+        )
     }
 
     #[test]

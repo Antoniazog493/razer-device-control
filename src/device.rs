@@ -1,14 +1,14 @@
-/// HID device communication for the Razer BlackShark V2 Pro dongle.
-///
-/// Write sequences mirror what Synapse sends and what the OpenRazer driver
-/// verified on this headset. Two firmware quirks shape them:
-///
-/// - The 2.4GHz link dozes after ~0.3s idle and drops the first frame sent
-///   into it, so every sequence starts with a sacrificial remote-mode frame.
-/// - A preset select that crosses families (classic <-> esports) only
-///   switches the family, so selects are read back and retried.
-///
-/// Every frame in and out goes to debug.log when it's enabled.
+//! HID device communication for the Razer BlackShark V2 Pro dongle.
+//!
+//! Write sequences mirror what Synapse sends and what the OpenRazer driver
+//! verified on this headset. Two firmware quirks shape them:
+//!
+//! - The 2.4GHz link dozes after ~0.3s idle and drops the first frame sent
+//!   into it, so every sequence starts with a sacrificial remote-mode frame.
+//! - A preset select that crosses families (classic <-> esports) only
+//!   switches the family, so selects are read back and retried.
+//!
+//! Every frame in and out goes to debug.log when it's enabled.
 
 use hidapi::HidApi;
 use std::cell::{Cell, RefCell};
@@ -109,17 +109,9 @@ impl Device {
             log_hid_devices(&api);
 
             for info in api.device_list() {
-                if info.vendor_id() == VID
-                    && info.product_id() == PID
-                    && info.usage_page() == USAGE_PAGE_VENDOR
-                {
-                    let handle = info
-                        .open_device(&api)
-                        .map_err(|e| format!("Cannot open device: {e}"))?;
-                    let product = info
-                        .product_string()
-                        .unwrap_or("Razer BlackShark V2 Pro")
-                        .to_string();
+                if info.vendor_id() == VID && info.product_id() == PID && info.usage_page() == USAGE_PAGE_VENDOR {
+                    let handle = info.open_device(&api).map_err(|e| format!("Cannot open device: {e}"))?;
+                    let product = info.product_string().unwrap_or("Razer BlackShark V2 Pro").to_string();
                     dlog!("dongle abierto: {:?}", info.path());
                     return Ok(Device {
                         handle,
@@ -324,10 +316,7 @@ impl Device {
     }
 
     pub fn get_preset(&self) -> Option<EqPreset> {
-        self.query_u8(proto::CMD_PRESET_GET)
-            .ok()
-            .flatten()
-            .and_then(EqPreset::from_selector)
+        self.query_u8(proto::CMD_PRESET_GET).ok().flatten().and_then(EqPreset::from_selector)
     }
 
     pub fn get_firmware(&self) -> Option<String> {
@@ -348,11 +337,7 @@ impl Device {
 
     pub fn get_serial(&self) -> Option<String> {
         let v = self.query(proto::CMD_SERIAL).ok()??;
-        let s: String = v
-            .iter()
-            .take_while(|&&b| b != 0)
-            .map(|&b| b as char)
-            .collect();
+        let s: String = v.iter().take_while(|&&b| b != 0).map(|&b| b as char).collect();
         let s = s.trim().to_string();
         (!s.is_empty()).then_some(s)
     }
@@ -362,10 +347,7 @@ impl Device {
     /// Err means the dongle itself is gone.
     pub fn status(&self) -> Result<Status, String> {
         let _bus = self.lock()?;
-        let mut st = Status {
-            headset_connected: self.query_u8(proto::CMD_WIRELESS)? == Some(1),
-            ..Status::default()
-        };
+        let mut st = Status { headset_connected: self.query_u8(proto::CMD_WIRELESS)? == Some(1), ..Status::default() };
         if st.headset_connected {
             st.battery = self.get_battery();
             st.charging = self.is_charging();
@@ -574,11 +556,8 @@ impl Device {
 
     /// Auto power-off in minutes (15-60), 0 = never.
     pub fn set_auto_off(&self, minutes: u8) -> Result<(), String> {
-        let minutes = if minutes == 0 {
-            0
-        } else {
-            minutes.clamp(proto::AUTO_OFF_MIN_MINUTES, proto::AUTO_OFF_MAX_MINUTES)
-        };
+        let minutes =
+            if minutes == 0 { 0 } else { minutes.clamp(proto::AUTO_OFF_MIN_MINUTES, proto::AUTO_OFF_MAX_MINUTES) };
         self.write_value(proto::CMD_AUTO_OFF, minutes)
     }
 

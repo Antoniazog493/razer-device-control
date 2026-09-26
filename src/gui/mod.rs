@@ -1,7 +1,7 @@
-/// Control panel. The page in ui/ draws everything; this module is its
-/// controller: it owns the config and the worker threads, turns the page's
-/// messages into changes, and sends the page a snapshot of the state
-/// (`App::view`) whenever something changes.
+//! Control panel. The page in ui/ draws everything; this module is its
+//! controller: it owns the config and the worker threads, turns the page's
+//! messages into changes, and sends the page a snapshot of the state
+//! (`App::view`) whenever something changes.
 
 mod assets;
 mod diag;
@@ -14,8 +14,8 @@ use std::time::{Duration, Instant};
 
 use crate::config::{Config, EqMethod, EqMode, Profile};
 use crate::protocol::{self, EqPreset, EQ_BANDS};
-use crate::worker::{self, AudioCmd, AudioState, Change, DevCmd, DevEvent, DeviceInfo, DiagCmd, Notify, Target};
 use crate::winaudio::{self, AudioDevice, Endpoint};
+use crate::worker::{self, AudioCmd, AudioState, Change, DevCmd, DevEvent, DeviceInfo, DiagCmd, Notify, Target};
 use crate::{connlog, debuglog, registry, synapse};
 
 pub use window::run;
@@ -29,41 +29,89 @@ const CONN_LOG_REFRESH: Duration = Duration::from_secs(3);
 pub enum Msg {
     /// The page loaded (or reloaded) and wants the full state.
     Ready,
-    SelectProfile { index: usize },
+    SelectProfile {
+        index: usize,
+    },
     NewProfile,
     DuplicateProfile,
-    RenameProfile { name: String },
+    RenameProfile {
+        name: String,
+    },
     DeleteProfile,
     /// A .synapse4 file the user picked or dropped, read by the page.
-    Import { name: String, text: String },
+    Import {
+        name: String,
+        text: String,
+    },
     ApplyNow,
-    EqMode { mode: EqMode },
-    Preset { preset: EqPreset },
+    EqMode {
+        mode: EqMode,
+    },
+    Preset {
+        preset: EqPreset,
+    },
     EqReset,
     EqCopyToCustom,
     /// Custom curve after a drag on the graph ends.
-    EqBands { bands: Vec<i8> },
+    EqBands {
+        bands: Vec<i8>,
+    },
     /// Windows volume, 0-100.
-    Volume { id: String, value: f32 },
-    Mute { id: String, muted: bool },
+    Volume {
+        id: String,
+        value: f32,
+    },
+    Mute {
+        id: String,
+        muted: bool,
+    },
     /// Default device set on connect; `flow` is "out" or "in", "" id = don't change.
-    DefaultDevice { flow: String, id: String },
-    Dnd { on: bool },
-    Sidetone { on: bool },
+    DefaultDevice {
+        flow: String,
+        id: String,
+    },
+    Dnd {
+        on: bool,
+    },
+    Sidetone {
+        on: bool,
+    },
     /// `commit` = the slider was released (send it), else just store it.
-    SidetoneVolume { value: u8, commit: bool },
-    AutoOff { on: bool },
-    AutoOffMinutes { value: u8, commit: bool },
-    Autostart { on: bool },
-    DebugLog { on: bool },
-    Advanced { eq_method: EqMethod, release_remote: bool, send_legacy_config: bool },
+    SidetoneVolume {
+        value: u8,
+        commit: bool,
+    },
+    AutoOff {
+        on: bool,
+    },
+    AutoOffMinutes {
+        value: u8,
+        commit: bool,
+    },
+    Autostart {
+        on: bool,
+    },
+    DebugLog {
+        on: bool,
+    },
+    Advanced {
+        eq_method: EqMethod,
+        release_remote: bool,
+        send_legacy_config: bool,
+    },
     /// Open something outside the app: "mixer", "sound", "connlog",
     /// "debuglog", "logdir", "configdir".
-    Open { what: String },
+    Open {
+        what: String,
+    },
     WizardOpen,
     WizardStart,
-    WizardPress { k: usize },
-    WizardAnswer { heard: bool },
+    WizardPress {
+        k: usize,
+    },
+    WizardAnswer {
+        heard: bool,
+    },
     WizardFinish,
     WizardCancel,
 }
@@ -286,7 +334,9 @@ impl App {
             }
             Msg::EqBands { bands } => {
                 // Only Custom is editable; the stored presets live in the headset.
-                if let (Ok(bands), EqPreset::Custom) = (<[i8; EQ_BANDS]>::try_from(bands), self.profile().active_preset()) {
+                if let (Ok(bands), EqPreset::Custom) =
+                    (<[i8; EQ_BANDS]>::try_from(bands), self.profile().active_preset())
+                {
                     let bands = bands.map(|b| b.clamp(protocol::EQ_MIN_DB, protocol::EQ_MAX_DB));
                     if bands != self.profile().custom_eq {
                         self.profile_mut().custom_eq = bands;
@@ -297,11 +347,11 @@ impl App {
             Msg::Volume { id, value } => {
                 let v = (value / 100.0).clamp(0.0, 1.0);
                 self.endpoint_mut(&id, |e| e.volume = v);
-                let _ = self.audio_tx.send(AudioCmd::SetVolume(id, v));
+                let _ = self.audio_tx.send(AudioCmd::Volume(id, v));
             }
             Msg::Mute { id, muted } => {
                 self.endpoint_mut(&id, |e| e.muted = muted);
-                let _ = self.audio_tx.send(AudioCmd::SetMute(id, muted));
+                let _ = self.audio_tx.send(AudioCmd::Mute(id, muted));
             }
             Msg::DefaultDevice { flow, id } => {
                 match flow.as_str() {
@@ -311,7 +361,7 @@ impl App {
                 }
                 self.store();
                 if !id.is_empty() {
-                    let _ = self.audio_tx.send(AudioCmd::SetDefault(id));
+                    let _ = self.audio_tx.send(AudioCmd::DefaultDevice(id));
                 }
             }
             Msg::Dnd { on } => {
@@ -442,7 +492,11 @@ impl App {
                 self.cfg.active = first;
                 self.push(Change::All);
                 self.toast(
-                    if n == 1 { "Perfil de Synapse importado".to_string() } else { format!("{n} perfiles de Synapse importados") },
+                    if n == 1 {
+                        "Perfil de Synapse importado".to_string()
+                    } else {
+                        format!("{n} perfiles de Synapse importados")
+                    },
                     false,
                 );
             }
@@ -478,9 +532,12 @@ impl App {
         let p = self.profile();
         let st = &self.info.status;
         let (conn_text, conn_level) = self.connection();
-        let presets = |list: &[EqPreset]| -> Vec<Value> { list.iter().map(|&x| json!({ "id": x, "label": x.label() })).collect() };
+        let presets = |list: &[EqPreset]| -> Vec<Value> {
+            list.iter().map(|&x| json!({ "id": x, "label": x.label() })).collect()
+        };
         let endpoint = |e: &Option<Endpoint>| {
-            e.as_ref().map(|e| json!({ "id": e.id, "name": e.name, "volume": (e.volume * 100.0).round(), "muted": e.muted }))
+            e.as_ref()
+                .map(|e| json!({ "id": e.id, "name": e.name, "volume": (e.volume * 100.0).round(), "muted": e.muted }))
         };
         let devices = |list: &[AudioDevice]| -> Vec<Value> {
             list.iter().map(|d| json!({ "id": d.id, "name": d.name, "default": d.is_default })).collect()
@@ -579,7 +636,10 @@ mod tests {
     #[test]
     fn page_messages_parse() {
         assert!(matches!(parse(r#"{"cmd":"ready"}"#), Msg::Ready));
-        assert!(matches!(parse(r#"{"cmd":"preset","preset":"apex_legends"}"#), Msg::Preset { preset: EqPreset::ApexLegends }));
+        assert!(matches!(
+            parse(r#"{"cmd":"preset","preset":"apex_legends"}"#),
+            Msg::Preset { preset: EqPreset::ApexLegends }
+        ));
         assert!(matches!(parse(r#"{"cmd":"eq_mode","mode":"esports"}"#), Msg::EqMode { mode: EqMode::Esports }));
         assert!(matches!(
             parse(r#"{"cmd":"sidetone_volume","value":40,"commit":true}"#),

@@ -1,5 +1,5 @@
-/// Settings and profiles, stored as JSON in %APPDATA%\rzr\config.json
-/// (~/.config/rzr/config.json elsewhere).
+//! Settings and profiles, stored as JSON in %APPDATA%\rzr\config.json
+//! (~/.config/rzr/config.json elsewhere).
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
@@ -104,9 +104,8 @@ impl Profile {
             self.esports_preset = EqPreset::ApexLegends;
         }
         self.sidetone_volume = self.sidetone_volume.clamp(1, 100);
-        self.auto_off_minutes = self
-            .auto_off_minutes
-            .clamp(protocol::AUTO_OFF_MIN_MINUTES, protocol::AUTO_OFF_MAX_MINUTES);
+        self.auto_off_minutes =
+            self.auto_off_minutes.clamp(protocol::AUTO_OFF_MIN_MINUTES, protocol::AUTO_OFF_MAX_MINUTES);
         if self.name.trim().is_empty() {
             self.name = "Perfil".to_string();
         }
@@ -223,10 +222,7 @@ impl Config {
         if !self.profiles.iter().any(|p| p.name == base) {
             return base.to_string();
         }
-        (2..)
-            .map(|n| format!("{base} ({n})"))
-            .find(|name| !self.profiles.iter().any(|p| &p.name == name))
-            .unwrap()
+        (2..).map(|n| format!("{base} ({n})")).find(|name| !self.profiles.iter().any(|p| &p.name == name)).unwrap()
     }
 }
 
