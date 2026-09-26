@@ -8,6 +8,8 @@ Panel de control para los audífonos Razer BlackShark V2 Pro (dongle `1532:0555`
 2. Usa los términos de **[CONTEXT.md](CONTEXT.md)** (preset, ranura, curva, modo remoto…) en código, commits y conversación.
 3. Sigue **[docs/REGLAS.md](docs/REGLAS.md)**. Lo más importante está abajo.
 
+**Si trabajas en la PC del usuario (Windows, headset real):** lee también [docs/HANDOFF.md](docs/HANDOFF.md).
+
 Más documentos: [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) (cómo está construida la app), [docs/HALLAZGOS.md](docs/HALLAZGOS.md) (lo averiguado sobre el headset, Synapse y THX), [docs/adr/](docs/adr/) (decisiones y sus porqués), [CHANGELOG.md](CHANGELOG.md).
 
 ## Comandos

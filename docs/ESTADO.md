@@ -50,6 +50,8 @@ Leyenda de verificación:
 
 ## Esperando al usuario (en la PC)
 
+Estos pasos también los puede hacer una sesión local de Claude Code en la PC; ver [HANDOFF.md](HANDOFF.md).
+
 1. **Abrir el panel nuevo en Windows** (artefacto `rzr-windows` del último build). Revisar: que abra sin parpadeo blanco, arrastrar un `.synapse4`, sliders y EQ.
 2. **Ronda 2 de la prueba guiada** (AJUSTES › DIAGNÓSTICO) y enviar `debug.log`. Cerrar Synapse antes (se pelean por el dongle).
 3. **Captura del servicio de THX:** con THX sonando y Synapse cerrado, abrir PowerShell **como administrador** y ejecutar `tools/capturar-synapse.ps1 -Fase thx-servicio` (solo lee, sin pasos guiados); enviar el `.zip`.
