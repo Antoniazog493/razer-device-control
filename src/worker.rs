@@ -71,11 +71,12 @@ pub enum DiagCmd {
 
 #[derive(Clone, Copy, Debug)]
 pub enum DiagAction {
-    /// Custom preset with this curve.
-    Curve([i8; EQ_BANDS]),
-    Preset(EqPreset),
-    /// "Speaker Preset EQ Status" (0x9E).
-    EqStatus(u8),
+    /// Custom preset with this curve, then leave the preset and come back.
+    CurveRelatch([i8; EQ_BANDS]),
+    /// This curve written into a given preset's slot (e.g. an esports one).
+    SlotCurve(EqPreset, [i8; EQ_BANDS]),
+    /// Select a preset without writing any curve.
+    Select(EqPreset),
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -307,9 +308,9 @@ impl DevWorker {
                         Some(dev) => {
                             dev.set_options(Options { method, release_remote: release, ..self.target.opts });
                             let result = match action {
-                                DiagAction::Curve(bands) => dev.set_eq(EqPreset::Custom, &bands),
-                                DiagAction::Preset(p) => dev.set_eq(p, &self.target.profile.custom_eq),
-                                DiagAction::EqStatus(v) => dev.set_eq_status(v),
+                                DiagAction::CurveRelatch(bands) => dev.set_curve_relatched(EqPreset::Custom, &bands),
+                                DiagAction::SlotCurve(p, bands) => dev.set_slot_curve(p, &bands),
+                                DiagAction::Select(p) => dev.set_preset(p),
                             };
                             thread::sleep(Duration::from_millis(150));
                             let back = dev.eq_readback();

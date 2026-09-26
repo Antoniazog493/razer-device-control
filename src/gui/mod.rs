@@ -944,10 +944,12 @@ impl RzrApp {
                     .selected_text(match self.cfg.eq_method {
                         EqMethod::Verified => "Verificado (actual)",
                         EqMethod::Original => "Primera versión de rzr",
+                        EqMethod::Relatch => "Escribir y cambiar de preset",
                     })
                     .show_ui(ui, |ui| {
                         changed |= ui.selectable_value(&mut self.cfg.eq_method, EqMethod::Verified, "Verificado (actual)").changed();
                         changed |= ui.selectable_value(&mut self.cfg.eq_method, EqMethod::Original, "Primera versión de rzr").changed();
+                        changed |= ui.selectable_value(&mut self.cfg.eq_method, EqMethod::Relatch, "Escribir y cambiar de preset").changed();
                     });
             });
             ui.horizontal(|ui| {

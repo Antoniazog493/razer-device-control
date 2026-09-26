@@ -122,6 +122,9 @@ pub enum EqMethod {
     Verified,
     /// The first rzr release's sequence, sent twice, no read-back.
     Original,
+    /// Verified write, then switch to another preset and back, so the
+    /// headset loads the freshly written curve (guided test, round 2).
+    Relatch,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

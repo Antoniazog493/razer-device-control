@@ -1,6 +1,10 @@
 /// Guided EQ test: sends contrasting EQ settings with each way of talking to
 /// the headset, asks the user whether they hear the difference, and keeps
 /// the first way that works. Every frame goes to debug.log meanwhile.
+///
+/// Round 1 (on the user's headset) found that a curve written into Custom
+/// is stored and read back exactly, yet not heard, while switching between
+/// the built-in presets is heard. Round 2 tests why.
 
 use eframe::egui::{self, Color32, RichText};
 
@@ -13,12 +17,21 @@ use crate::worker::DiagAction;
 /// Strong low end vs strong top end: impossible to miss if the EQ works.
 const BASS: [i8; EQ_BANDS] = [5, 5, 5, 4, 0, -5, -5, -5, -5, -5];
 const TREBLE: [i8; EQ_BANDS] = [-5, -5, -5, -5, 0, 4, 5, 5, 5, 5];
+/// Every band down 9 dB vs flat: a plain volume drop, the easiest change
+/// to hear (OpenRazer's own audibility check used the same curve).
+const QUIET: [i8; EQ_BANDS] = [-9; EQ_BANDS];
+const FLAT: [i8; EQ_BANDS] = [0; EQ_BANDS];
 
 #[derive(Clone, Copy, PartialEq)]
 enum Kind {
-    Curve { method: EqMethod, release: bool },
-    Presets,
-    EqStatus,
+    /// Custom curve, then leave Custom and come back.
+    Relatch,
+    /// Select two esports presets whose stored curves differ a lot.
+    EsportsSelect,
+    /// Write the curves into an esports preset's slot, like Synapse does.
+    EsportsCurve,
+    /// Flat vs everything at -9 dB in Custom, with the switch-and-back.
+    Loudness,
 }
 
 struct Test {
@@ -27,31 +40,26 @@ struct Test {
     kind: Kind,
 }
 
-const TESTS: [Test; 5] = [
+const TESTS: [Test; 4] = [
     Test {
-        title: "1 · Ecualizador, método actual",
-        explain: "Envía una curva con muchos graves (A) y otra con muchos agudos (B), como lo hace rzr ahora.",
-        kind: Kind::Curve { method: EqMethod::Verified, release: true },
+        title: "1 · Personalizado, cambiando de preset y volviendo",
+        explain: "Escribe la curva de graves (A) o de agudos (B) en PERSONALIZADO, pasa un momento a JUEGO y vuelve a PERSONALIZADO. Cada pulsación tarda unos 2 segundos.",
+        kind: Kind::Relatch,
     },
     Test {
-        title: "2 · Ecualizador, sin devolver el control al headset",
-        explain: "Lo mismo, pero el headset se queda en «modo remoto» (controlado por el PC) al terminar cada comando.",
-        kind: Kind::Curve { method: EqMethod::Verified, release: false },
+        title: "2 · Presets Esports guardados",
+        explain: "Solo cambia de preset, sin escribir curvas: A = APEX LEGENDS (curva suave), B = CS2 (curva muy marcada).",
+        kind: Kind::EsportsSelect,
     },
     Test {
-        title: "3 · Ecualizador, método de la primera versión de rzr",
-        explain: "Lo mismo, con la secuencia exacta que usaba la primera versión de rzr.",
-        kind: Kind::Curve { method: EqMethod::Original, release: false },
+        title: "3 · Curva escrita en un preset Esports",
+        explain: "Escribe la curva de graves (A) o de agudos (B) en el preset APEX LEGENDS, como hace Synapse con los presets Esports.",
+        kind: Kind::EsportsCurve,
     },
     Test {
-        title: "4 · Interruptor del ecualizador (0x9E)",
-        explain: "Se deja puesta la curva de graves y se cambia un ajuste interno del headset: A = 1, B = 0.",
-        kind: Kind::EqStatus,
-    },
-    Test {
-        title: "5 · Presets guardados en el headset",
-        explain: "A = preset JUEGO, B = preset PELÍCULA. La diferencia es menor que en las pruebas anteriores.",
-        kind: Kind::Presets,
+        title: "4 · Volumen con el ecualizador",
+        explain: "A = PERSONALIZADO plano, B = PERSONALIZADO con todas las bandas en −9 dB (debería sonar mucho más bajo). También cambia de preset y vuelve.",
+        kind: Kind::Loudness,
     },
 ];
 
@@ -59,10 +67,6 @@ const TESTS: [Test; 5] = [
 enum Answer {
     Yes,
     No,
-    /// Test 4: which one has more bass.
-    MoreBassA,
-    MoreBassB,
-    Same,
 }
 
 /// What the test concluded; applied to the config at the end.
@@ -72,6 +76,27 @@ pub struct Outcome {
     /// 0x9E value that keeps the EQ on, if it made a difference.
     pub eq_status: Option<u8>,
     pub summary: Vec<String>,
+}
+
+impl Kind {
+    fn actions(self) -> (&'static str, &'static str, DiagAction, DiagAction) {
+        match self {
+            Kind::Relatch => ("A · GRAVES", "B · AGUDOS", DiagAction::CurveRelatch(BASS), DiagAction::CurveRelatch(TREBLE)),
+            Kind::EsportsSelect => (
+                "A · APEX LEGENDS",
+                "B · CS2",
+                DiagAction::Select(EqPreset::ApexLegends),
+                DiagAction::Select(EqPreset::Csgo),
+            ),
+            Kind::EsportsCurve => (
+                "A · GRAVES",
+                "B · AGUDOS",
+                DiagAction::SlotCurve(EqPreset::ApexLegends, BASS),
+                DiagAction::SlotCurve(EqPreset::ApexLegends, TREBLE),
+            ),
+            Kind::Loudness => ("A · PLANO", "B · −9 dB", DiagAction::CurveRelatch(FLAT), DiagAction::CurveRelatch(QUIET)),
+        }
+    }
 }
 
 pub enum Request {
@@ -115,73 +140,48 @@ impl Wizard {
         self.waiting = false;
     }
 
-    /// First method the user could hear, else the default one.
-    fn working_method(&self) -> Option<(EqMethod, bool)> {
-        TESTS.iter().zip(&self.answers).find_map(|(t, a)| match (t.kind, a) {
-            (Kind::Curve { method, release }, Some(Answer::Yes)) => Some((method, release)),
-            _ => None,
-        })
+    fn answer(&self, kind: Kind) -> Option<Answer> {
+        TESTS.iter().zip(&self.answers).find(|(t, _)| t.kind == kind).and_then(|(_, a)| *a)
     }
 
-    fn method_for_rest(&self) -> (EqMethod, bool) {
-        self.working_method().unwrap_or((EqMethod::Verified, true))
+    /// Switching away and back is the only change that can become the
+    /// default method; the esports findings need code changes first.
+    fn working_method(&self) -> Option<(EqMethod, bool)> {
+        let heard = |k| self.answer(k) == Some(Answer::Yes);
+        (heard(Kind::Relatch) || heard(Kind::Loudness)).then_some((EqMethod::Relatch, true))
     }
 
     fn run(&mut self, out: &mut Vec<Request>, action: DiagAction) {
-        let (method, release) = match TESTS[self.current()].kind {
-            Kind::Curve { method, release } => (method, release),
-            _ => self.method_for_rest(),
-        };
         self.waiting = true;
-        out.push(Request::Run { action, method, release });
+        out.push(Request::Run { action, method: EqMethod::Verified, release: true });
     }
 
-    fn current(&self) -> usize {
-        match self.stage {
-            Stage::Test(i) => i,
-            _ => 0,
-        }
-    }
-
-    fn enter_test(&mut self, i: usize, out: &mut Vec<Request>) {
+    fn enter_test(&mut self, i: usize) {
         self.stage = Stage::Test(i);
         self.tried = [false; 2];
         self.playing = None;
         self.readback = None;
-        if TESTS[i].kind == Kind::EqStatus {
-            // Put the bass curve in first, with the best method found so far.
-            self.run(out, DiagAction::Curve(BASS));
-        }
     }
 
-    fn next(&mut self, out: &mut Vec<Request>) {
+    fn next(&mut self) {
         match self.stage {
-            Stage::Intro => self.enter_test(0, out),
-            Stage::Test(i) if i + 1 < TESTS.len() => self.enter_test(i + 1, out),
+            Stage::Intro => self.enter_test(0),
+            Stage::Test(i) if i + 1 < TESTS.len() => self.enter_test(i + 1),
             _ => self.stage = Stage::Summary,
         }
     }
 
     fn outcome(&self) -> Outcome {
-        let method = self.working_method();
-        let eq_status = match self.answers[3] {
-            Some(Answer::MoreBassA) => Some(1),
-            Some(Answer::MoreBassB) => Some(0),
-            _ => None,
-        };
-        let mut summary = Vec::new();
+        let mut summary = vec!["Ronda 2 de la prueba guiada".to_string()];
         for (t, a) in TESTS.iter().zip(&self.answers) {
             let a = match a {
                 Some(Answer::Yes) => "se oye el cambio",
                 Some(Answer::No) => "no se oye",
-                Some(Answer::MoreBassA) => "más graves con A (1)",
-                Some(Answer::MoreBassB) => "más graves con B (0)",
-                Some(Answer::Same) => "suena igual",
                 None => "sin responder",
             };
             summary.push(format!("{}: {a}", t.title));
         }
-        Outcome { method, eq_status, summary }
+        Outcome { method: self.working_method(), eq_status: None, summary }
     }
 
     /// Draw the dialog. `connected` = headset linked.
@@ -201,7 +201,7 @@ impl Wizard {
     }
 
     fn intro(&mut self, ui: &mut egui::Ui, out: &mut Vec<Request>) {
-        dim_text(ui, "Sirve para averiguar qué forma de enviar el ecualizador funciona con tus audífonos.");
+        dim_text(ui, "Ronda 2: la curva PERSONALIZADA se guarda en el headset pero no se oye, y los presets de fábrica sí. Estas pruebas buscan por qué.");
         ui.add_space(4.0);
         for line in [
             "1. Pon música que conozcas bien (con graves y voces) a un volumen cómodo.",
@@ -215,7 +215,7 @@ impl Wizard {
         ui.add_space(10.0);
         ui.horizontal(|ui| {
             if ui.button(RichText::new("Empezar").size(15.0)).clicked() {
-                self.next(out);
+                self.next();
             }
             if ui.button("Cancelar").clicked() {
                 out.push(Request::Cancel);
@@ -229,16 +229,7 @@ impl Wizard {
         dim_text(ui, t.explain);
         ui.add_space(10.0);
 
-        let (a_label, b_label, a, b) = match t.kind {
-            Kind::Curve { .. } => ("A · GRAVES", "B · AGUDOS", DiagAction::Curve(BASS), DiagAction::Curve(TREBLE)),
-            Kind::EqStatus => ("A · 0x9E = 1", "B · 0x9E = 0", DiagAction::EqStatus(1), DiagAction::EqStatus(0)),
-            Kind::Presets => (
-                "A · JUEGO",
-                "B · PELÍCULA",
-                DiagAction::Preset(EqPreset::Game),
-                DiagAction::Preset(EqPreset::Movie),
-            ),
-        };
+        let (a_label, b_label, a, b) = t.kind.actions();
         let can_send = connected && !self.waiting && !busy;
         ui.horizontal(|ui| {
             for (k, (label, action)) in [(a_label, a), (b_label, b)].into_iter().enumerate() {
@@ -265,19 +256,12 @@ impl Wizard {
         if !ready {
             faint_text(ui, "Prueba A y B al menos una vez cada una para poder responder.");
         }
-        let choices: &[(&str, Answer)] = match t.kind {
-            Kind::EqStatus => &[
-                ("Más graves con A", Answer::MoreBassA),
-                ("Más graves con B", Answer::MoreBassB),
-                ("Suenan igual", Answer::Same),
-            ],
-            _ => &[("Sí, el sonido cambia", Answer::Yes), ("No, suena igual", Answer::No)],
-        };
+        let choices: &[(&str, Answer)] = &[("Sí, el sonido cambia", Answer::Yes), ("No, suena igual", Answer::No)];
         ui.horizontal(|ui| {
             for (label, answer) in choices {
                 if ui.add_enabled(ready, egui::Button::new(*label)).clicked() {
                     self.answers[i] = Some(*answer);
-                    self.next(out);
+                    self.next();
                 }
             }
             ui.add_space(12.0);
@@ -293,18 +277,18 @@ impl Wizard {
             ui.label(RichText::new(line).size(12.5));
         }
         ui.add_space(8.0);
-        let (text, color): (String, Color32) = match outcome.method {
-            Some((EqMethod::Verified, true)) => ("El método actual funciona. No hace falta cambiar nada.".into(), GREEN),
-            Some((EqMethod::Verified, false)) => (
-                "Funciona si el headset se queda en modo remoto. rzr lo hará así a partir de ahora.".into(),
+        let esports = self.answer(Kind::EsportsCurve) == Some(Answer::Yes);
+        let (text, color): (String, Color32) = match (outcome.method, esports) {
+            (Some(_), _) => (
+                "Funciona escribir la curva y cambiar de preset. rzr lo hará así a partir de ahora.".into(),
                 GREEN,
             ),
-            Some((EqMethod::Original, _)) => (
-                "Funciona el método de la primera versión de rzr. rzr lo usará a partir de ahora.".into(),
-                GREEN,
+            (None, true) => (
+                "La curva solo se oye en un preset Esports. Envíame debug.log: con eso puedo hacer que PERSONALIZADO use ese camino.".into(),
+                WARN,
             ),
-            None => (
-                "Ningún método cambió el sonido. Envíame el archivo debug.log (botón de abajo) para seguir investigando."
+            (None, false) => (
+                "Ninguna prueba cambió el sonido. Envíame el archivo debug.log (botón de abajo) para seguir investigando."
                     .into(),
                 WARN,
             ),

@@ -419,7 +419,7 @@ impl Device {
     /// the target preset must be confirmed first. Within one sequence the
     /// selector latches the slot's previous content, so a selector-only
     /// re-apply after the write is what makes the new curve audible.
-    fn set_slot_curve(&self, preset: EqPreset, bands: &[i8; EQ_BANDS]) -> Result<(), String> {
+    pub fn set_slot_curve(&self, preset: EqPreset, bands: &[i8; EQ_BANDS]) -> Result<(), String> {
         let _bus = self.lock()?;
         dlog!("escribir curva {bands:?} en {preset:?}");
         if self.get_preset() != Some(preset) {
@@ -455,8 +455,29 @@ impl Device {
         match (self.opts.get().method, curve) {
             (EqMethod::Original, curve) => self.set_eq_original(preset, curve.as_ref()),
             (EqMethod::Verified, Some(curve)) => self.set_slot_curve(preset, &curve),
-            (EqMethod::Verified, None) => self.set_preset(preset),
+            (EqMethod::Relatch, Some(curve)) => self.set_curve_relatched(preset, &curve),
+            (_, None) => self.set_preset(preset),
         }
+    }
+
+    /// Write a curve, then leave the preset and come back to it. On the
+    /// user's headset a curve written into the active preset is stored
+    /// (read-back matches) but not heard; entering the preset from another
+    /// one may be what loads it into the audio path.
+    pub fn set_curve_relatched(&self, preset: EqPreset, bands: &[i8; EQ_BANDS]) -> Result<(), String> {
+        let _bus = self.lock()?;
+        self.set_slot_curve(preset, bands)?;
+        // Stay in the same family so the switch back isn't a cross-family one.
+        let via = match preset {
+            EqPreset::ApexLegends => EqPreset::Csgo,
+            p if p.is_esports() => EqPreset::ApexLegends,
+            EqPreset::Game => EqPreset::Music,
+            _ => EqPreset::Game,
+        };
+        dlog!("ir a {via:?} y volver a {preset:?}");
+        self.set_preset(via)?;
+        thread::sleep(Duration::from_millis(150));
+        self.set_preset(preset)
     }
 
     /// The first rzr release's apply sequence, extended to every preset:
@@ -500,11 +521,6 @@ impl Device {
         self.remote(true)?;
         self.send(&proto::set_value(cmd_id, value))?;
         self.release()
-    }
-
-    /// Set "Speaker Preset EQ Status" (0x9E) directly (guided test).
-    pub fn set_eq_status(&self, value: u8) -> Result<(), String> {
-        self.write_value(proto::CMD_PRESET_EQ_STATUS, value)
     }
 
     /// What the headset reports for its EQ state, for the guided test and
