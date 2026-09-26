@@ -5,18 +5,20 @@
 #   2) Con Synapse instalado:       powershell -ExecutionPolicy Bypass -File .\capturar-synapse.ps1 -Fase synapse
 #   3) Synapse DESINSTALADO y PC reiniciado (mejoras de audio de Windows):
 #                                   powershell -ExecutionPolicy Bypass -File .\capturar-synapse.ps1 -Fase windows
+#   4) Con Synapse y THX funcionando (donde guarda THX sus ajustes):
+#                                   powershell -ExecutionPolicy Bypass -File .\capturar-synapse.ps1 -Fase thx
 #
 # Todo queda en el Escritorio, en la carpeta "rzr-captura" y en "rzr-captura.zip"
-# ("rzr-captura-windows" y su .zip en la fase windows).
+# ("rzr-captura-windows" / "rzr-captura-thx" y su .zip en esas fases).
 # El script solo LEE el registro y copia los logs de Synapse: no modifica nada.
 
 param(
-    [ValidateSet('antes', 'synapse', 'windows')]
+    [ValidateSet('antes', 'synapse', 'windows', 'thx')]
     [string]$Fase = 'synapse'
 )
 
 $ErrorActionPreference = 'Continue'
-$carpeta = if ($Fase -eq 'windows') { 'rzr-captura-windows' } else { 'rzr-captura' }
+$carpeta = switch ($Fase) { 'windows' { 'rzr-captura-windows' } 'thx' { 'rzr-captura-thx' } default { 'rzr-captura' } }
 $out = Join-Path ([Environment]::GetFolderPath('Desktop')) $carpeta
 New-Item -ItemType Directory -Force $out | Out-Null
 $timeline = Join-Path $out 'pasos.txt'
@@ -35,6 +37,20 @@ function Get-HeadsetEndpoints {
     }
 }
 
+# Claves y carpetas donde THX podria guardar sus ajustes (fase thx).
+$thxKeys = @(
+    'HKLM\SOFTWARE\THX', 'HKLM\SOFTWARE\WOW6432Node\THX', 'HKCU\Software\THX',
+    'HKLM\SOFTWARE\Razer', 'HKLM\SOFTWARE\WOW6432Node\Razer', 'HKCU\Software\Razer'
+)
+function Get-ThxFolders {
+    foreach ($root in $env:ProgramData, $env:LOCALAPPDATA, $env:APPDATA, $env:ProgramFiles, ${env:ProgramFiles(x86)}) {
+        if (-not $root -or -not (Test-Path $root)) { continue }
+        Get-ChildItem $root -Directory -Depth 1 -ErrorAction SilentlyContinue |
+            Where-Object { $_.Name -match 'THX|Razer' } | ForEach-Object { $_.FullName }
+    }
+}
+$thxFolders = if ($Fase -eq 'thx') { @(Get-ThxFolders) } else { @() }
+
 # Foto del registro de audio del headset (incluye los efectos/APO de Windows).
 function Save-Snapshot([string]$name) {
     $file = Join-Path $out "$name.txt"
@@ -45,6 +61,19 @@ function Save-Snapshot([string]$name) {
     }
     foreach ($k in $keys) {
         reg query $k /s 2>&1 | Out-File $file -Append -Encoding utf8
+    }
+    if ($Fase -ne 'thx') { return }
+    foreach ($k in $thxKeys) {
+        reg query $k /s 2>$null | Out-File $file -Append -Encoding utf8
+    }
+    # Archivos cambiados en el ultimo minuto: nombre, tamano y hora (sin contenido).
+    "# archivos modificados recientemente" | Out-File $file -Append -Encoding utf8
+    $desde = (Get-Date).AddMinutes(-1)
+    foreach ($f in $thxFolders) {
+        Get-ChildItem $f -Recurse -File -ErrorAction SilentlyContinue |
+            Where-Object { $_.LastWriteTime -ge $desde } |
+            ForEach-Object { "$($_.LastWriteTime.ToString('HH:mm:ss.fff'))  $($_.Length)  $($_.FullName)" } |
+            Out-File $file -Append -Encoding utf8
     }
 }
 
@@ -80,6 +109,23 @@ if ($Fase -eq 'windows') {
         'Mejoras: desmarca DESHABILITAR TODAS LAS MEJORAS y pulsa Aplicar. Cierra esa ventana.',
         'Configuracion de Windows > Sistema > Sonido > tu microfono BlackShark: si ves Mejoras de audio o Claridad de voz, activalo.',
         'Vuelve a dejar esa opcion del microfono como estaba.'
+    )
+} elseif ($Fase -eq 'thx') {
+    $pasos = @(
+        'Pon musica. Abre Synapse en AUDIO con el headset conectado por el dongle y THX funcionando. Cierra rzr si esta abierto. No cambies nada todavia.',
+        'SONIDO: activa THX SPATIAL AUDIO. (Si oyes el cambio, escribe si antes de Enter; si no, escribe no.)',
+        'SONIDO: vuelve a ESTEREO. (Escribe si o no: oyes el cambio?)',
+        'MEJORA: activa BASS BOOST y muevelo al maximo. (si/no)',
+        'MEJORA: desactiva BASS BOOST.',
+        'MEJORA: activa SOUND NORMALIZATION y muevela al maximo. (si/no)',
+        'MEJORA: desactiva SOUND NORMALIZATION.',
+        'MEJORA: activa VOICE CLARITY y muevela al maximo. (si/no)',
+        'MEJORA: desactiva VOICE CLARITY.',
+        'SONIDO: selecciona JUEGO / GAME y sube la banda de 1kHz al maximo. (si/no)',
+        'SONIDO: vuelve a dejar JUEGO como estaba.',
+        'Activa BASS BOOST al maximo otra vez y CIERRA Synapse por completo (icono junto al reloj > Salir / Exit). Se sigue oyendo el Bass Boost? (si/no)',
+        'Abre el Administrador de tareas > Servicios, detiene los que empiecen por Razer o THX. Se sigue oyendo? (si/no; escribe tambien sus nombres)',
+        'Reinicia los servicios (o reinicia el PC) y vuelve a abrir Synapse. Desactiva BASS BOOST.'
     )
 } else {
 $pasos = @(
@@ -120,7 +166,14 @@ $pasos = @(
 }
 
 Write-Host ''
-if ($Fase -eq 'windows') {
+if ($Fase -eq 'thx') {
+    Write-Host 'Captura guiada de THX Spatial Audio para rzr' -ForegroundColor Green
+    Write-Host 'Haz cada cambio, espera 2 segundos y presiona Enter.'
+    Write-Host 'Puedes escribir una respuesta o nota antes de Enter (s = saltar el paso).'
+    Write-Host ''
+    Save-Snapshot '00-thx-inicio'
+    Log '00  THX funcionando, antes de los pasos'
+} elseif ($Fase -eq 'windows') {
     Write-Host 'Captura guiada de las mejoras de audio de Windows para rzr' -ForegroundColor Green
     Write-Host 'Haz cada cambio, espera 2 segundos y presiona Enter.'
     Write-Host 'Si una opcion no existe, escribe s y Enter para saltarla.'
@@ -148,6 +201,7 @@ for ($i = 0; $i -lt $pasos.Count; $i++) {
         continue
     }
     Log "$n  $($pasos[$i])"
+    if ($r) { Log "$n  RESPUESTA: $r" }
     Save-Snapshot "paso-$n"
 }
 
@@ -161,6 +215,25 @@ if ($Fase -eq 'windows') {
     Write-Host "Listo: $zip" -ForegroundColor Green
     Write-Host 'Enviame ese archivo.'
     exit
+}
+
+if ($Fase -eq 'thx') {
+    Write-Host ''
+    Write-Host 'Reuniendo datos del driver de THX...' -ForegroundColor Green
+    $info = Join-Path $out 'thx-driver.txt'
+    '# pnputil /enum-drivers (paquetes Razer / THX)' | Out-File $info -Encoding utf8
+    $bloques = ((pnputil /enum-drivers) -join "`n") -split "`n\s*`n"
+    $bloques | Where-Object { $_ -match 'Razer|THX' } | Out-File $info -Append -Encoding utf8
+    '# servicios' | Out-File $info -Append -Encoding utf8
+    Get-Service | Where-Object { $_.Name -match 'Razer|THX' -or $_.DisplayName -match 'Razer|THX' } |
+        Format-Table -AutoSize Status, StartType, Name, DisplayName | Out-File $info -Append -Encoding utf8
+    '# DLL cargadas en audiodg.exe (requiere PowerShell como administrador)' | Out-File $info -Append -Encoding utf8
+    tasklist /m /fi 'imagename eq audiodg.exe' 2>&1 | Out-File $info -Append -Encoding utf8
+    '# archivos en las carpetas THX/Razer del DriverStore' | Out-File $info -Append -Encoding utf8
+    Get-ChildItem "$env:windir\System32\DriverStore\FileRepository" -Directory -ErrorAction SilentlyContinue |
+        Where-Object { $_.Name -match 'thx|razer' } | ForEach-Object {
+            Get-ChildItem $_.FullName -Recurse -File | ForEach-Object { "$($_.Length)  $($_.FullName)" }
+        } | Out-File $info -Append -Encoding utf8
 }
 
 Write-Host ''
@@ -189,4 +262,8 @@ if (Test-Path $zip) { Remove-Item $zip }
 Compress-Archive -Path "$out\*" -DestinationPath $zip
 Write-Host ''
 Write-Host "Listo: $zip" -ForegroundColor Green
-Write-Host 'Enviame ese archivo. Ya puedes desinstalar Synapse.'
+if ($Fase -eq 'thx') {
+    Write-Host 'Enviame ese archivo. No desinstales Synapse todavia.'
+} else {
+    Write-Host 'Enviame ese archivo. Ya puedes desinstalar Synapse.'
+}
