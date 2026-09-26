@@ -72,3 +72,10 @@ _Evitar:_ "preajuste" en el código (se usa solo en la interfaz, como sinónimo 
 _Evitar:_ "driver de THX" para referirse a sus ajustes; el driver es solo el paquete que lo instala.
 
 **Windows Sonic** (Windows Sonic): el sonido espacial propio de Windows. Choca con THX.
+
+**Preset de THX** (THX preset): un ajuste del ecualizador por software de THX: `Game Mode`, `Cinema Mode`, `Music Mode` o `Custom`. Es distinto del preset del headset, aunque Synapse elige los dos a la vez.
+_Evitar:_ decir solo "preset" cuando se habla de THX.
+
+**Estado de THX** (THX state): el JSON con todos los ajustes del motor THX (espacial, Bass Boost, normalización, claridad de voz, preset de THX, curva) que queda en el registro de la salida de los audífonos.
+
+**Servicio de THX** (THX service): `VSSrv.exe`, instalado con el paquete de driver de THX. Recibe los cambios de Synapse (por ZeroMQ) y guarda el estado de THX. No es un servicio de Razer.

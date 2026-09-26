@@ -39,9 +39,9 @@ Esas mejoras **no las hace el headset**. Una captura de los logs de Synapse 4 co
 
 - Synapse **no envía ningún comando USB** al headset para Bass Boost, Normalización, Claridad de voz, THX ni para ninguna mejora del micrófono.
 - Bass Boost, Normalización, Claridad de voz y THX Spatial Audio se aplican con `AudioEffectsTHXV3.setRender…`, es decir, en el **motor de audio de THX**. Synapse lo instala en Windows como efecto de audio ("THX Spatial Audio (BlackShark V2 Pro)") y **reemplaza** a los efectos de Windows que traían los audífonos ("Microsoft Audio Home Theater Effects").
-- Las mejoras de micrófono no produjeron ni comandos USB ni llamadas a THX.
+- Las mejoras de micrófono tampoco usan USB: sin THX instalado no hacen nada; con THX, también van a su motor.
 
-El efecto de THX queda instalado en Windows como un APO (se carga en `audiodg.exe`), así que el objetivo es que rzr escriba los mismos ajustes que Synapse le da. `tools/capturar-synapse.ps1 -Fase thx` averigua dónde los guarda: foto del registro y de las carpetas de THX/Razer en cada paso, qué paquete de driver lo instala y si sigue sonando con Synapse cerrado.
+El efecto de THX queda instalado en Windows como un APO (se carga en `audiodg.exe`) y **sigue sonando con Synapse cerrado**. Sus ajustes están en el registro de la salida de los audífonos (un JSON con Bass Boost, normalización, claridad de voz, sonido espacial y la curva; ver [docs/HALLAZGOS.md](docs/HALLAZGOS.md#thx-spatial-audio)), así que rzr podrá mostrarlos y, cuando se sepa cómo los recibe el efecto, cambiarlos. `tools/capturar-synapse.ps1 -Fase thx-servicio` reúne lo que falta para eso.
 
 Sin Synapse, los audífonos vuelven a usar los efectos de Windows, que incluyen **Bass Boost, Loudness Equalization (normalización) y sonido envolvente virtual**. rzr podrá controlarlos una vez identificados sus ajustes: `tools/capturar-synapse.ps1 -Fase windows` los captura. Para el micrófono, las alternativas son [Equalizer APO](https://sourceforge.net/projects/equalizerapo/) (EQ) o NVIDIA Broadcast / RNNoise (reducción de ruido).
 

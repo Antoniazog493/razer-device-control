@@ -12,7 +12,7 @@ Cambios que nota quien usa rzr. Formato basado en [Keep a Changelog](https://kee
 - Varios perfiles; importar perfiles de Synapse (`.synapse4`) con el botón o arrastrando el archivo.
 - Registro de caídas del enlace (`conexion.log`) con resumen en ENERGÍA.
 - Prueba guiada del ecualizador y registro de depuración (`debug.log`) en AJUSTES › DIAGNÓSTICO.
-- Script de captura (`tools/capturar-synapse.ps1`) con fases para Synapse, las mejoras de Windows y THX.
+- Script de captura (`tools/capturar-synapse.ps1`) con fases para Synapse, las mejoras de Windows, THX y el servicio de THX (`-Fase thx-servicio`, solo lectura).
 - Documentación del proyecto: estado, arquitectura, hallazgos, reglas y decisiones.
 
 ### Cambiado

@@ -9,7 +9,7 @@ Cada hallazgo indica su **fuente**: captura de Synapse, OpenRazer, prueba en el 
 - **El enlace se duerme** tras ~0,3 s sin tráfico y descarta el primer frame. Toda secuencia empieza con un frame de modo remoto "de sacrificio". _Fuente: OpenRazer (verificado en hardware)._
 - **Cambio de familia:** un selector que cruza de Estándar a Esports (o al revés) solo cambia la familia; el headset cae en el preset que recordaba de esa familia. Hay que leer y reintentar. _Fuente: OpenRazer._
 - **La curva se guarda en la ranura del preset activo**, sea cual sea. Por eso rzr confirma el preset antes de escribir. _Fuente: OpenRazer._
-- **Juego, Película y Música editados en Synapse** solo cambian el EQ por software de THX; el headset sigue con su curva de fábrica. _Fuente: captura de Synapse._
+- **Juego, Película y Música editados en Synapse** solo cambian el EQ por software de THX; el headset sigue con su curva de fábrica. _Fuente: captura de Synapse; confirmado con `SetRenderEQGains` en la captura del 2026-09-25 (ver [THX](#thx-spatial-audio))._
 - **Selectores Esports:** FA Apex, FB CS2, FC Valorant, FD Fortnite, FE CoD. Synapse escribe la curva de cada preset Esports en su ranura. _Fuente: captura de Synapse._
 - **Sidetone:** Synapse convierte su escala 0–100 al headset en forma lineal (50 → 7, 31 → 4). _Fuente: captura de Synapse._
 - Una respuesta puede traer varios mensajes (una confirmación y un evento). _Fuente: captura de Synapse._
@@ -42,7 +42,54 @@ Comparación con OpenRazer (driver `razerblackshark`, [openrazer/openrazer#2862]
   pnputil /add-driver C:\thx\*.inf /install  # reinstalar sin Synapse
   ```
 
-- **Hipótesis principal:** THX lee sus ajustes del registro del dispositivo (FxProperties) o recibe avisos de cambio de Windows. Si es así, rzr solo tiene que escribir esos valores. Otras posibilidades: archivos propios o comunicación directa con el efecto. La captura `-Fase thx` y, si hace falta, Process Monitor (filtrar procesos de Razer y `audiodg.exe`, operaciones `RegSetValue` y `WriteFile`) lo resuelven.
+- **Los ajustes de THX sí persisten sin Synapse.** Con Bass Boost al máximo, se siguió oyendo al cerrar Synapse y detener los servicios de Razer. _Fuente: captura `-Fase thx` (pasos 12 y 13), confirmado de oído por el usuario._ Falta saber si el **servicio de THX** también estaba corriendo: no se llama "THX" ni "Razer" y la captura no lo detectó.
+
+### Dónde guarda THX sus ajustes
+
+_Fuente: captura `-Fase thx` y `-Fase synapse` del 2026-09-25 (fotos del registro en cada paso)._
+
+| Lugar | Qué hay |
+|---|---|
+| `HKLM\SOFTWARE\Microsoft\Windows\CurrentVersion\MMDevices\Audio\Render\{id}\Properties` (la salida de los audífonos) | `{d5e8f0ab-4de6-4d91-ab21-68868dda6a4a},6` (REG_SZ): **estado completo de THX en JSON**. `,7` (REG_BINARY): el mismo estado en protobuf. `,0` = `VSHP` (perfil de audífonos), `,1` = ruta a `C:\ProgramData\THX\usb\1532\0555\thx_spatial.conf.json`, `,11` y `,12` = 2. |
+| `HKCU\Software\THX\SpatialAudio\UserState` | Una copia del estado (JSON con `snake_case`) por **preset de THX**, con nombre `<preset>-<0/1 espacial>-Headphones-usb\1532\0555`; además `CurrentPreset-usb\1532\0555-VSHP`, `EndpointScope-…` y `UserScope`. |
+| `HKLM\SOFTWARE\THX\Discovery` | `thx:sa:service = tcp://127.0.0.1:49671` y `thx:sa:status:publisher = tcp://127.0.0.1:49670`: el **servicio de THX** escucha ahí. |
+| Captura del micrófono, `{d5e8f0ab-…},0` | `VSMic`. Sus ajustes no cambiaron en el registro durante la captura (sin explicar aún). |
+
+Ejemplo del JSON de `,6` (se reescribe entero en cada cambio):
+
+```json
+{"sequenceNumber":125,"spatialEnabled":false,"hardwareId":"usb\\1532\\0555","outputDevice":"Headphones",
+ "presetName":"Music Mode","eqCurve":[0,2,2,2,2,2,2,1,1,1,1,1,1,2,2,2,3,3,3,3,3,3,3,3,3,1,1,1,0,0,0],"tilt":0,
+ "spatialProcessingMode":"Headphones5","drcEnabled":false,"drcLevel":100,"emitterPositions":{…},"room":{…},
+ "bassBoostEnabled":true,"bassBoost":100,"dialogEnhancementEnabled":false,"dialogEnhancement":100,"upmix":{…}}
+```
+
+| Opción de Synapse | Campo | Visto en la captura |
+|---|---|---|
+| THX Spatial Audio / Estéreo | `spatialEnabled` | `true` / `false` (también cambia el `-1-`/`-0-` de `CurrentPreset`) |
+| Bass Boost | `bassBoostEnabled`, `bassBoost` | nivel 0–100; el nivel se conserva al apagarlo |
+| Sound Normalization | `drcEnabled`, `drcLevel` | 0–100 |
+| Voice Clarity | `dialogEnhancementEnabled`, `dialogEnhancement` | 0–100 |
+| Preset Juego / Película / Música / Personalizado | `presetName` | `Game Mode`, `Cinema Mode`, `Music Mode`, `Custom`; cambia también `room` |
+| Ecualizador | `eqCurve` | 31 valores: el primero es 0 y después cada una de las 10 bandas repetida 3 veces |
+| — | `sequenceNumber` | sube en cada cambio |
+
+- **Los presets de THX no son los del headset.** Juego/Película/Música/Personalizado en Synapse también eligen un preset de THX con su propia curva (EQ por software de 10 bandas; al arrastrar 1 kHz hasta arriba quedó en +5). Juego = `[-3,-3,-4,0,5,5,4,1,0,-1]`, Película = `[4,4,3,0,-3,-1,3,5,2,1]`, Música = `[2,2,1,1,2,3,3,3,1,0]`, Personalizado = plano. _Fuente: `ThxV3NativeSubProcess.log` (`SetRenderPreset` + `SetRenderEQGains`)._
+- **El botón EQ del headset también cambia THX:** al pulsarlo, Synapse copió la curva de Juego al preset `Custom` de THX. Es decir, con Synapse abierto el sonido cambia por los dos lados (headset y THX). _Fuente: captura `-Fase synapse`, paso 33._ Puede influir en la prueba de la curva Personalizada.
+
+### Cómo le llegan los ajustes a THX
+
+- Synapse usa `ThxV3Native` (versión 1.1.42.1), que trae `thxv3lib` 3.2.0.0 y **ZeroMQ 4.3.5**. Al iniciar "crea el cliente THX" y le envía llamadas como `SetRenderBassBoost`, `SetRenderBassBoostLevel`, `SetRenderNormalization`, `SetRenderVocalClarity`, `SetRenderSpatialProcessing`, `SetRenderPreset`, `SetRenderEQGains` (con `SetRenderBatch` 1/0 alrededor). _Fuente: `ThxV3NativeSubProcess.log`._
+- **Hipótesis principal:** el cliente habla por ZeroMQ con el **servicio de THX** (`VSSrv.exe`, del paquete `thxrtsvc.inf`), que escribe el estado en el registro del dispositivo, y el efecto (`THXOutAPO-SSE2-v3.dll` en `audiodg.exe`) lo lee de ahí. Escribir en esa clave de `HKLM` exige permisos de administrador o del sistema.
+- **Formas de controlarlo desde rzr**, de más limpia a menos:
+  1. `spatial-config-util.exe` (paquete `thxrtscu.inf`): utilidad de configuración de THX; hay que ver qué opciones acepta.
+  2. Hablarle al servicio por ZeroMQ como hace Synapse: hay que averiguar el formato de los mensajes.
+  3. Escribir `,6` y `,7` en el registro del dispositivo: requiere administrador y no se sabe si el efecto se entera sin el servicio.
+- La captura `-Fase thx-servicio` (solo lectura) reúne lo necesario para elegir: servicio y puertos, permisos de la clave, archivos de `C:\ProgramData\THX` y los textos de las utilidades de THX.
+
+### Paquete de driver
+
+_Fuente: `pnputil /enum-drivers` en la captura `-Fase thx`._ Todos firmados por Microsoft, versión 3.2.3.0 (24/06/2024): `thxrtapo.inf` (el efecto: `THXOutAPO-SSE2-v3.dll`, `THXMicAPO-SSE2-v3.dll`), `thxrtscu.inf` (`spatial-config-util.exe`), `thxrtsvc.inf` (servicio: `VSSrv.exe`, `VSHelper.exe`, `VSSrvInit.exe`) y `thxusbapo.inf` (lo asocia al USB `1532:0555`). Presets: "THX V3 APO Presets BlackSharkV2Pro2023 0555" 3.2.18.0.
 
 ## Mejoras de audio de Windows
 
@@ -57,7 +104,9 @@ Capturadas con `-Fase windows` en `FxProperties\{b13412ee-07af-4c57-b08b-e327f8d
 
 ## Micrófono
 
-Las mejoras de micrófono de Synapse (EQ, normalización, claridad vocal, reducción de ruido, puerta de voz) no generan comandos USB ni llamadas a THX. _Fuente: captura de Synapse._ Alternativas sin Synapse: Equalizer APO (EQ), NVIDIA Broadcast o RNNoise (ruido).
+- **Sin THX instalado**, las mejoras de micrófono de Synapse (EQ, normalización, claridad vocal, reducción de ruido, puerta de voz) no generaron comandos USB ni llamadas a THX. _Fuente: primera captura de Synapse._
+- **Con THX instalado** sí van al motor THX: `SetCaptureNormalization(+Level)`, `SetCaptureVocalClarity(+Level)`, `SetCaptureNoiseReduction(+Level)`, `SetCaptureVoiceGate(+Level, en dB: −40 a −20)`, `SetCaptureEQGains` (10 bandas; 1 kHz al máximo = +12), `SetCapturePreview`, `SetCaptureSidetoneLevel` y `SetCaptureVolumeBySystem`. _Fuente: captura `-Fase synapse` del 2026-09-25 (`ThxV3NativeSubProcess.log`)._ Dónde se guardan: sin averiguar.
+- Alternativas sin THX: Equalizer APO (EQ), NVIDIA Broadcast o RNNoise (ruido).
 
 ## Interfaz
 

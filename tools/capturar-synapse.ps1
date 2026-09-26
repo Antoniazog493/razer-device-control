@@ -7,18 +7,25 @@
 #                                   powershell -ExecutionPolicy Bypass -File .\capturar-synapse.ps1 -Fase windows
 #   4) Con Synapse y THX funcionando (donde guarda THX sus ajustes):
 #                                   powershell -ExecutionPolicy Bypass -File .\capturar-synapse.ps1 -Fase thx
+#   5) Con THX funcionando y Synapse CERRADO, en PowerShell como ADMINISTRADOR (como le llegan los ajustes a THX):
+#                                   powershell -ExecutionPolicy Bypass -File .\capturar-synapse.ps1 -Fase thx-servicio
 #
 # Todo queda en el Escritorio, en la carpeta "rzr-captura" y en "rzr-captura.zip"
-# ("rzr-captura-windows" / "rzr-captura-thx" y su .zip en esas fases).
+# ("rzr-captura-windows" / "rzr-captura-thx" / "rzr-captura-thx-servicio" y su .zip en esas fases).
 # El script solo LEE el registro y copia los logs de Synapse: no modifica nada.
 
 param(
-    [ValidateSet('antes', 'synapse', 'windows', 'thx')]
+    [ValidateSet('antes', 'synapse', 'windows', 'thx', 'thx-servicio')]
     [string]$Fase = 'synapse'
 )
 
 $ErrorActionPreference = 'Continue'
-$carpeta = switch ($Fase) { 'windows' { 'rzr-captura-windows' } 'thx' { 'rzr-captura-thx' } default { 'rzr-captura' } }
+$carpeta = switch ($Fase) {
+    'windows' { 'rzr-captura-windows' }
+    'thx' { 'rzr-captura-thx' }
+    'thx-servicio' { 'rzr-captura-thx-servicio' }
+    default { 'rzr-captura' }
+}
 $out = Join-Path ([Environment]::GetFolderPath('Desktop')) $carpeta
 New-Item -ItemType Directory -Force $out | Out-Null
 $timeline = Join-Path $out 'pasos.txt'
@@ -89,6 +96,94 @@ if ($Fase -eq 'antes') {
     Write-Host ''
     Write-Host 'Listo. Ahora instala Razer Synapse, conecta el headset y ejecuta:' -ForegroundColor Green
     Write-Host '  powershell -ExecutionPolicy Bypass -File .\capturar-synapse.ps1 -Fase synapse'
+    exit
+}
+
+# Fase thx-servicio: sin pasos guiados. Reune lo necesario para saber como le llegan los ajustes
+# al efecto de THX: el servicio de THX, sus puertos, quien puede escribir los ajustes del
+# dispositivo y los textos de ayuda de la utilidad de THX. Solo lee; no cambia nada.
+if ($Fase -eq 'thx-servicio') {
+    Write-Host ''
+    Write-Host 'Reuniendo datos del servicio de THX (tarda un minuto)...' -ForegroundColor Green
+    $admin = ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole(
+        [Security.Principal.WindowsBuiltInRole]::Administrator)
+    $info = Join-Path $out 'servicio.txt'
+    "# administrador: $admin" | Out-File $info -Encoding utf8
+
+    '# servicios de THX (por su ejecutable en el DriverStore)' | Out-File $info -Append -Encoding utf8
+    Get-CimInstance Win32_Service -ErrorAction SilentlyContinue |
+        Where-Object { $_.PathName -match 'thx|VSSrv|VSHelper' -or $_.Name -match 'THX|VSSrv' } |
+        Format-List Name, DisplayName, State, StartMode, StartName, PathName | Out-File $info -Append -Encoding utf8
+
+    '# procesos de THX' | Out-File $info -Append -Encoding utf8
+    Get-Process -ErrorAction SilentlyContinue |
+        Where-Object { $_.ProcessName -match 'VSSrv|VSHelper|spatial|thx|Razer' } |
+        Format-Table -AutoSize Id, ProcessName, Path | Out-File $info -Append -Encoding utf8
+
+    '# puertos publicados por THX (HKLM\SOFTWARE\THX\Discovery) y quien escucha' | Out-File $info -Append -Encoding utf8
+    $disc = Get-ItemProperty 'HKLM:\SOFTWARE\THX\Discovery' -ErrorAction SilentlyContinue
+    if ($disc) {
+        $disc.PSObject.Properties | Where-Object { "$($_.Value)" -match '^tcp://' } | ForEach-Object {
+            $port = [int]("$($_.Value)" -replace '.*:', '')
+            $conn = Get-NetTCPConnection -LocalPort $port -State Listen -ErrorAction SilentlyContinue | Select-Object -First 1
+            $proc = if ($conn) { (Get-Process -Id $conn.OwningProcess -ErrorAction SilentlyContinue).ProcessName } else { 'nadie' }
+            "$($_.Name) = $($_.Value)  escucha: $proc" | Out-File $info -Append -Encoding utf8
+        }
+    }
+
+    '# permisos de la clave de ajustes del dispositivo de salida' | Out-File $info -Append -Encoding utf8
+    foreach ($k in @(Get-HeadsetEndpoints)) {
+        $ps = 'Registry::' + $k + '\Properties'
+        "## $k\Properties" | Out-File $info -Append -Encoding utf8
+        (Get-Acl $ps -ErrorAction SilentlyContinue).AccessToString | Out-File $info -Append -Encoding utf8
+    }
+
+    '# ajustes de THX: dispositivo, usuario y archivos' | Out-File $info -Append -Encoding utf8
+    Save-Snapshot 'thx-ajustes'
+    reg query 'HKCU\Software\THX' /s 2>$null | Out-File (Join-Path $out 'thx-ajustes.txt') -Append -Encoding utf8
+    reg query 'HKLM\SOFTWARE\THX' /s 2>$null | Out-File (Join-Path $out 'thx-ajustes.txt') -Append -Encoding utf8
+    $thxData = Join-Path $env:ProgramData 'THX'
+    if (Test-Path $thxData) {
+        Get-ChildItem $thxData -Recurse -File -ErrorAction SilentlyContinue | ForEach-Object {
+            "$($_.LastWriteTime.ToString('yyyy-MM-dd HH:mm:ss'))  $($_.Length)  $($_.FullName)" |
+                Out-File $info -Append -Encoding utf8
+            if ($_.Extension -match '^\.(json|conf|txt|log|ini|xml)$' -and $_.Length -lt 2MB) {
+                $rel = $_.FullName.Substring($thxData.Length).TrimStart('\')
+                $dest = Join-Path $out "programdata-thx\$rel"
+                New-Item -ItemType Directory -Force (Split-Path $dest) | Out-Null
+                Copy-Item $_.FullName $dest -ErrorAction SilentlyContinue
+            }
+        }
+    }
+
+    # Textos de las utilidades de THX (opciones de linea de comandos, mensajes del servicio).
+    # Solo se leen los textos del archivo; no se ejecuta nada.
+    $store = "$env:windir\System32\DriverStore\FileRepository"
+    $exes = Get-ChildItem $store -Directory -ErrorAction SilentlyContinue | Where-Object { $_.Name -match '^thxrt' } |
+        ForEach-Object { Get-ChildItem $_.FullName -File -Filter *.exe }
+    foreach ($exe in $exes) {
+        $file = Join-Path $out "textos-$($exe.BaseName).txt"
+        "# $($exe.FullName)  $($exe.VersionInfo.FileVersion)" | Out-File $file -Encoding utf8
+        $bytes = [IO.File]::ReadAllBytes($exe.FullName)
+        $ascii = [Text.Encoding]::ASCII.GetString($bytes)
+        $utf16 = [Text.Encoding]::Unicode.GetString($bytes)
+        $patron = '(?i)usage|(^|\s)--?[a-z][a-z-]+|help|tcp://|zmq|json|preset|bass|spatial|drc|dialog|eq[_ ]?curve|sequence|endpoint|propert|registry|userstate|scope'
+        foreach ($texto in $ascii, $utf16) {
+            [regex]::Matches($texto, '[\x20-\x7E]{6,200}') | ForEach-Object { $_.Value } |
+                Where-Object { $_ -match $patron } | Select-Object -Unique -First 1500 |
+                Out-File $file -Append -Encoding utf8
+        }
+    }
+
+    $zip = "$out.zip"
+    if (Test-Path $zip) { Remove-Item $zip }
+    Compress-Archive -Path "$out\*" -DestinationPath $zip
+    Write-Host ''
+    if (-not $admin) {
+        Write-Host 'Aviso: no se ejecuto como administrador; faltaran algunos datos.' -ForegroundColor Yellow
+    }
+    Write-Host "Listo: $zip" -ForegroundColor Green
+    Write-Host 'Enviame ese archivo.'
     exit
 }
 
