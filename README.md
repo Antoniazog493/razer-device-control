@@ -157,6 +157,18 @@ La interfaz es una página web normal en `ui/`, que rzr muestra con WebView2 (el
 
 Para compilar en Linux (solo para desarrollo) hace falta `libwebkit2gtk-4.1-dev`.
 
+## Documentación
+
+| Documento | Para qué |
+|---|---|
+| [docs/ESTADO.md](docs/ESTADO.md) | Qué está hecho, qué falta y qué sigue |
+| [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) | Cómo está construida la app y cómo agregar funciones |
+| [docs/HALLAZGOS.md](docs/HALLAZGOS.md) | Lo averiguado sobre el headset, Synapse, THX y Windows |
+| [docs/REGLAS.md](docs/REGLAS.md) | Reglas de trabajo: código, pruebas, git y documentación |
+| [docs/adr/](docs/adr/) | Decisiones importantes y sus porqués |
+| [CONTEXT.md](CONTEXT.md) | Glosario del proyecto |
+| [CHANGELOG.md](CHANGELOG.md) | Historial de cambios |
+
 ## Créditos
 
 - Protocolo original por ingeniería inversa de Synapse 4: [Ashesh3/razer-device-control](https://github.com/Ashesh3/razer-device-control).
