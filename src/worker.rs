@@ -42,19 +42,12 @@ pub enum Change {
 #[derive(Clone, Debug, PartialEq)]
 pub struct Target {
     pub profile: Profile,
-    pub default_speaker: String,
-    pub default_microphone: String,
     pub opts: Options,
 }
 
 impl Target {
     pub fn from_config(cfg: &Config) -> Self {
-        Self {
-            profile: cfg.profile().clone(),
-            default_speaker: cfg.default_speaker.clone(),
-            default_microphone: cfg.default_microphone.clone(),
-            opts: Options::from_config(cfg),
-        }
+        Self { profile: cfg.profile().clone(), opts: Options::from_config(cfg) }
     }
 }
 
@@ -495,7 +488,6 @@ impl DevWorker {
                     self.adopt_headset_preset();
                 }
                 self.push(&[Change::All]);
-                apply_default_devices(&self.target);
             }
             return;
         }
@@ -522,25 +514,28 @@ fn preset_drifted(read: EqPreset, wanted: EqPreset, preset_event: bool, since_wr
     read != wanted && (preset_event || since_write > PRESET_SETTLE)
 }
 
-/// Make the configured endpoints the Windows defaults.
-pub fn apply_default_devices(t: &Target) -> bool {
-    let mut ok = true;
-    if !t.default_speaker.is_empty() {
-        ok &= winaudio::set_default_device(&t.default_speaker);
-    }
-    if !t.default_microphone.is_empty() {
-        ok &= winaudio::set_default_device(&t.default_microphone);
-    }
-    ok
-}
-
 // ---------------------------------------------------------------------------
 // Windows audio
 
 pub enum AudioCmd {
     Volume(String, f32),
     Mute(String, bool),
+    /// Make this endpoint the Windows default, once: the user picked it in
+    /// the panel. rzr never changes the default on its own (on connect or at
+    /// startup), since the user switches devices themselves.
     DefaultDevice(String),
+}
+
+/// Switch the Windows default and log it by name: the change is visible to
+/// the user, and hard to trace otherwise.
+fn set_default_device(id: &str) {
+    let set = winaudio::set_default_device(id);
+    let name = [Flow::Render, Flow::Capture]
+        .into_iter()
+        .flat_map(winaudio::list_devices)
+        .find(|d| d.id == id)
+        .map_or_else(|| id.to_string(), |d| d.name);
+    dlog!("predeterminado elegido en el panel: {name} ({})", if set { "hecho" } else { "falló" });
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -577,11 +572,10 @@ pub fn spawn_audio_worker(demo: bool, notify: Notify) -> (Sender<AudioCmd>, Rece
                                     winaudio::set_mute(&id, m);
                                 }
                             },
-                            AudioCmd::DefaultDevice(id) => {
-                                if demo_state.is_none() {
-                                    winaudio::set_default_device(&id);
-                                }
-                            }
+                            AudioCmd::DefaultDevice(id) => match &mut demo_state {
+                                Some(s) => demo_set_default(s, &id),
+                                None => set_default_device(&id),
+                            },
                         }
                     }
                     for (id, v) in volumes {
@@ -923,6 +917,17 @@ fn demo_audio() -> AudioState {
         inputs: vec![inp.clone()],
         headset_out: Some(Endpoint { id: out.id, name: out.name, volume: 0.8, muted: false }),
         headset_in: Some(Endpoint { id: inp.id, name: inp.name, volume: 1.0, muted: false }),
+    }
+}
+
+/// Make `id` the default of its own list, as Windows does per flow.
+fn demo_set_default(s: &mut AudioState, id: &str) {
+    for list in [&mut s.outputs, &mut s.inputs] {
+        if list.iter().any(|d| d.id == id) {
+            for d in list.iter_mut() {
+                d.is_default = d.id == id;
+            }
+        }
     }
 }
 

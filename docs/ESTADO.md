@@ -35,7 +35,7 @@ Leyenda de verificación:
 |---|---|---|
 | Volumen de Windows | ✅ | |
 | Silencio de Windows | 🟡 | |
-| Dispositivo predeterminado al conectar | 🟡 | |
+| Elegir el dispositivo predeterminado | 🟡 | SONIDO › SALIDA PREDETERMINADA y MICRÓFONO › ENTRADA PREDETERMINADA muestran el predeterminado actual de Windows y lo cambian solo al elegir otro. Desde el 2026-09-26 rzr **ya no lo cambia al conectar ni al iniciar**: antes guardaba el elegido y lo imponía en cada conexión, y como la entrada tenía el micrófono de la laptop (`C-Media(R) Audio`), el predeterminado volvía a él en cada reinicio. El usuario elige el predeterminado y cambia de audífonos seguido. `debug.log` anota cada cambio (`predeterminado elegido en el panel: …`). Comprobado que el proceso en segundo plano ya no lo toca al arrancar; falta la prueba tras reiniciar. |
 | Perfiles, importar `.synapse4` (archivo o arrastrando) | ✅ | Arrastrar a la ventana funciona. |
 | Iniciar con Windows / proceso en segundo plano | 🟡 | |
 | Panel nuevo (WebView2) | ✅ | Abre bien en Windows 11, aplica el perfil, sliders y curva se mueven bien. Lo que no suena (sidetone, curva) es del headset, no del panel. |
@@ -48,7 +48,7 @@ Leyenda de verificación:
 | Prueba guiada del EQ (ronda 2) | 🟡 ⏳ | |
 | Mejoras del micrófono por THX (EQ con presets y Personalizado, normalización, claridad vocal, reducción de ruido, puerta de voz) | ✅ | [ADR 0007](adr/0007-microfono-en-el-perfil.md). Oído el 2026-09-26 con Synapse cerrado, escuchando el micrófono en vivo: todas cambian y sus niveles también. Se guardan en el perfil; cada cambio se confirma leyendo el servicio. |
 | Preset de EQ del micrófono en el headset (`0x96`) | 🟡 | Mismos bytes que Synapse; se envía con el perfil. Su efecto no se nota aparte (el EQ que se oye es el de THX). |
-| Volver a poner las mejoras del micrófono tras reiniciar la PC | 🟡 ⏳ | El proceso en segundo plano las manda a THX al conectarse a su servicio. Falta la prueba (ver "Esperando al usuario"). |
+| Volver a poner las mejoras del micrófono tras reiniciar la PC | ✅ | El proceso en segundo plano las manda a THX al conectarse a su servicio. Oído el 2026-09-26 tras reiniciar sin Synapse y sin abrir el panel. |
 | Registro de depuración (`debug.log`) | ✅ | Registra también los cambios de THX. |
 
 ### Investigación
@@ -63,7 +63,7 @@ Leyenda de verificación:
 
 ## Esperando al usuario (en la PC)
 
-1. **Mejoras del micrófono tras reiniciar** (ya se puede: Synapse está desinstalado, así que no las manda al iniciar ni enturbia la prueba): con "Iniciar con Windows" activado y alguna mejora encendida en el perfil (por ejemplo la reducción de ruido), reiniciar la PC **sin abrir el panel ni Synapse** y escucharse en vivo: la mejora debería seguir activa. Si no, abrir el panel y comprobar que vuelve (eso confirmaría que THX las olvida y que falla el proceso en segundo plano).
+1. **Predeterminado tras reiniciar:** elegir los predeterminados (en el panel o en Windows), reiniciar y comprobar que Windows se queda con ellos. Si cambian solos, buscar `predeterminado` en `debug.log`: rzr solo lo anota cuando se elige en el panel, así que si no aparece a esa hora, el cambio no lo hizo rzr.
 2. **Ronda 2 de la prueba guiada** (AJUSTES › DIAGNÓSTICO) y enviar `debug.log`. Ya no es urgente: el EQ que se oye va por THX (ver "Sigue" 1). Sirve para saber si la curva del headset puede funcionar sin THX.
 
 ## Sigue (en orden)
@@ -73,7 +73,7 @@ El sondeo de Synapse del 2026-09-26 mostró qué hace Synapse con THX instalado 
 1. ~~Niveles de THX por ZeroMQ~~: hecho el 2026-09-26 (cliente propio en `src/thx/`, [ADR 0005](adr/0005-thx-por-zeromq.md), sliders en MEJORAS). La normalización se oyó con audio de mucho contraste.
 2. ~~EQ como Synapse~~: hecho el 2026-09-26 ([ADR 0006](adr/0006-eq-como-synapse.md)), también con el botón EQ del headset, con el panel abierto o cerrado.
 3. ~~Sidetone como Synapse~~: no hizo falta; el sidetone del headset se oye con Synapse cerrado (2026-09-26). No se tocó el sidetone de THX. Si vuelve a fallar, el plan era fijar y activar el de THX (`IVSSrvSettings::SetInputSidetoneLevel`/`SetInputSidetoneState`, o abrir una captura del micrófono; ver [HALLAZGOS.md](HALLAZGOS.md#micrófono)).
-4. ~~Micrófono por THX~~: hecho el 2026-09-26 ([ADR 0007](adr/0007-microfono-en-el-perfil.md)). Queda la prueba tras reiniciar ("Esperando al usuario" 1).
+4. ~~Micrófono por THX~~: hecho el 2026-09-26 ([ADR 0007](adr/0007-microfono-en-el-perfil.md)), también tras reiniciar con el panel cerrado.
 5. ~~Separar THX de Synapse~~: hecho el 2026-09-26. Los instaladores de THX están respaldados en `%USERPROFILE%\rzr-respaldo-thx`, fuera del repo (los dos paquetes de `Package Cache` con sus `.msi`, y los cuatro drivers exportados con `pnputil /export-driver` como plan B). Synapse está desinstalado y THX reinstalado solo; tras reiniciar, THX crea su estado en la salida nueva del headset ([HALLAZGOS.md](HALLAZGOS.md#paquete-de-driver)). Sin cambios en rzr, el usuario oyó el efecto, los presets y el micrófono, y cada cambio quedó en el servicio (Espacial, normalización, claridad de voz, los cuatro presets con su curva y las mejoras del micrófono).
 6. **Revisar la configuración de audio de Windows:** avisar si las mejoras de audio están desactivadas o Windows Sonic encendido, y ofrecer corregirlo.
 7. **Confirmar en hardware** lo marcado 🟡 y actualizar esta tabla.

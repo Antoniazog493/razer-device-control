@@ -126,11 +126,11 @@ function renderAudio() {
       setChecked($(`#${flow}-mute`), !ep.muted);
       setSlider($(`#${flow}-volume`), ep.volume, !ep.muted);
     }
-    const current = S.audio[`default_${flow}`];
-    const options = [["", "No cambiar"]];
-    if (current && !S.audio[list].some((d) => d.id === current)) options.push([current, "(dispositivo no conectado)"]);
-    for (const d of S.audio[list]) options.push([d.id, d.default ? `${d.name}  (actual)` : d.name]);
-    fillSelect($(`[data-devices="${flow}"]`), options, current);
+    // Shows Windows' current default; picking one switches it once.
+    const current = S.audio[list].find((d) => d.default);
+    const options = S.audio[list].map((d) => [d.id, d.name]);
+    if (!current) options.unshift(["", "(ninguno)"]);
+    fillSelect($(`[data-devices="${flow}"]`), options, current ? current.id : "");
   }
   const m = S.device.mic_muted;
   const state = $("#mic-state");
@@ -581,7 +581,7 @@ function setup() {
   $("#profile").addEventListener("change", (e) => send("select_profile", { index: Number(e.target.value) }));
   $("#eq-method").addEventListener("change", (e) => sendAdvanced({ eq_method: e.target.value }));
   for (const sel of $$("[data-devices]")) {
-    sel.addEventListener("change", () => send("default_device", { flow: sel.dataset.devices, id: sel.value }));
+    sel.addEventListener("change", () => send("default_device", { id: sel.value }));
   }
   for (const flow of ["out", "in"]) {
     $(`#${flow}-volume input`).addEventListener("input", (e) => {

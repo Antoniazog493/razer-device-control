@@ -20,14 +20,9 @@ pub fn legacy_config() -> Option<Config> {
     if let Ok(v) = key.get_value::<u32, _>("wait_timeout_ms") {
         cfg.wait_timeout_ms = v;
     }
-    if let Ok(v) = key.get_value::<String, _>("default_speaker") {
-        cfg.default_speaker = v;
-    }
-    if let Ok(v) = key.get_value::<String, _>("default_microphone") {
-        cfg.default_microphone = v;
-    }
     // "volume" was really the preset selector (255 = custom) and "enhancement"
-    // the preset-family flag, so neither carries over.
+    // the preset-family flag, so neither carries over. Nor do "default_speaker"
+    // and "default_microphone": rzr no longer changes Windows' default on its own.
     Some(cfg)
 }
 

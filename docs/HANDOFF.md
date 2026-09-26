@@ -88,7 +88,7 @@ Hecho el 2026-09-26, segunda sesión (pasos 1 a 4, todos oídos por el usuario c
 **La próxima sesión:**
 
 - Paso 5 hecho (tercera sesión): Synapse desinstalado y THX reinstalado solo, con `msiexec` desde el respaldo en `%USERPROFILE%\rzr-respaldo-thx`. Tras reiniciar, rzr funciona igual y el usuario lo oyó todo: efecto, presets y micrófono.
-- Sigue la prueba de "Esperando al usuario" 1: mejoras del micrófono tras reiniciar, ahora sin Synapse que enturbie. Hace falta una mejora encendida en el perfil antes de reiniciar (hoy solo está el EQ "Conferencia", difícil de notar).
+- Mejoras del micrófono tras reiniciar: ✅ (el proceso en segundo plano las repone sin abrir el panel). El micrófono predeterminado pasaba al de la laptop porque rzr imponía en cada conexión el elegido en ENTRADA PREDETERMINADA (`C-Media(R) Audio`). Ahora rzr solo cambia el predeterminado cuando el usuario lo elige en el panel; falta confirmarlo tras reiniciar ("Esperando al usuario" 1).
 - Después, ESTADO "Sigue" 6: revisar la configuración de audio de Windows.
 
 Notas para los próximos pasos:

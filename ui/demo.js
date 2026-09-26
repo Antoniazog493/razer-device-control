@@ -57,8 +57,6 @@
         { id: "spk", name: "Altavoces (Realtek(R) Audio)", default: false },
       ],
       inputs: [{ id: "in", name: "Micrófono (Razer BlackShark V2 Pro 2.4)", default: true }],
-      default_out: "out",
-      default_in: "",
     },
     settings: {
       autostart: true, debug_log: false, eq_method: "verified", release_remote: true,
@@ -146,7 +144,11 @@
     mic_effect_level({ effect, value }) { S.mic.effects[effect].level = value; },
     volume({ id, value }) { S.audio[id].volume = value; },
     mute({ id, muted }) { S.audio[id].muted = muted; },
-    default_device({ flow, id }) { S.audio[`default_${flow}`] = id; },
+    default_device({ id }) {
+      for (const list of [S.audio.outputs, S.audio.inputs]) {
+        if (list.some((d) => d.id === id)) for (const d of list) d.default = d.id === id;
+      }
+    },
     autostart({ on }) { S.settings.autostart = on; },
     debug_log({ on }) { S.settings.debug_log = on; },
     advanced(a) { Object.assign(S.settings, a); delete S.settings.cmd; },

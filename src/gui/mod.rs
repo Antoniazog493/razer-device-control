@@ -70,9 +70,8 @@ pub enum Msg {
         id: String,
         muted: bool,
     },
-    /// Default device set on connect; `flow` is "out" or "in", "" id = don't change.
+    /// Make this endpoint the Windows default now (only when picked).
     DefaultDevice {
-        flow: String,
         id: String,
     },
     Dnd {
@@ -456,13 +455,7 @@ impl App {
                 self.endpoint_mut(&id, |e| e.muted = muted);
                 let _ = self.audio_tx.send(AudioCmd::Mute(id, muted));
             }
-            Msg::DefaultDevice { flow, id } => {
-                match flow.as_str() {
-                    "out" => self.cfg.default_speaker = id.clone(),
-                    "in" => self.cfg.default_microphone = id.clone(),
-                    _ => return,
-                }
-                self.store();
+            Msg::DefaultDevice { id } => {
                 if !id.is_empty() {
                     let _ = self.audio_tx.send(AudioCmd::DefaultDevice(id));
                 }
@@ -728,8 +721,6 @@ impl App {
                 "in": endpoint(&self.audio.headset_in),
                 "outputs": devices(&self.audio.outputs),
                 "inputs": devices(&self.audio.inputs),
-                "default_out": self.cfg.default_speaker,
-                "default_in": self.cfg.default_microphone,
             },
             "settings": {
                 "autostart": self.autostart,

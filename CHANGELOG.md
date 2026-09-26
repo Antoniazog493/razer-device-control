@@ -8,10 +8,10 @@ Cambios que nota quien usa rzr. Formato basado en [Keep a Changelog](https://kee
 - Panel de control con el estilo de Synapse: Sonido, Mejoras, Micrófono, Energía y Ajustes.
 - Ecualizador: presets Juego/Película/Música, presets Esports (Apex, CoD, CS2, Fortnite, Valorant) y curva personalizada de 10 bandas que se arrastra.
 - Sidetone, No molestar, apagado automático, batería, carga, estado del botón de silencio, firmware y número de serie.
-- Volumen y silencio de Windows; dispositivo de salida y entrada predeterminados al conectar.
+- Volumen y silencio de Windows; elegir el dispositivo de salida y de entrada predeterminado de Windows.
 - Varios perfiles; importar perfiles de Synapse (`.synapse4`) con el botón o arrastrando el archivo.
 - Registro de caídas del enlace (`conexion.log`) con resumen en ENERGÍA.
-- Prueba guiada del ecualizador y registro de depuración (`debug.log`) en AJUSTES › DIAGNÓSTICO.
+- Prueba guiada del ecualizador y registro de depuración (`debug.log`) en AJUSTES › DIAGNÓSTICO. El registro anota también cada cambio del dispositivo predeterminado hecho desde el panel.
 - MEJORAS muestra el estado de THX (Bass Boost, Normalización, Claridad de voz, Spatial, sus niveles y el preset de THX) y permite cambiarlo todo sin tener Synapse abierto: activar o desactivar Bass Boost, Normalización, Claridad de voz y THX Spatial Audio, y el nivel de Bass Boost, Normalización y Claridad de voz.
 - El ecualizador se oye: con THX instalado, cada preset (Juego, Película, Música, Personalizado y los Esports) aplica también su curva en THX, como Synapse. La curva se mantiene al activar o desactivar THX Spatial Audio.
 - MICRÓFONO: mejoras del micrófono sin Synapse (THX): ecualizador con presets (Predeterminado, Refuerzo, Transmisión, Conferencia) y curva personalizada de −12 a +12 dB, normalización de volumen, claridad vocal, reducción de ruido y puerta de voz, cada una con su nivel. Se guardan en el perfil y rzr las vuelve a aplicar al iniciar.
@@ -22,6 +22,7 @@ Cambios que nota quien usa rzr. Formato basado en [Keep a Changelog](https://kee
 - El panel ahora es una página web en WebView2: `rzr.exe` pasa de 8,7 MB a ~1,3 MB y desaparecen los parpadeos en negro.
 - La configuración se guarda en `%APPDATA%\rzr\config.json` (se migra sola desde el registro).
 - Doble clic abre el panel; `--silent --watch` ya no muestra una consola.
+- rzr ya no cambia el dispositivo predeterminado de Windows al conectar el headset ni al iniciar: solo lo cambia cuando lo eliges en el panel (SONIDO › SALIDA PREDETERMINADA y MICRÓFONO › ENTRADA PREDETERMINADA), que muestran el predeterminado actual de Windows.
 
 ### Corregido
 - El comando que se creía "volumen" (`0x93`) es el selector de preset; `0x9D` es la familia del preset.

@@ -23,7 +23,6 @@ use std::time::{Duration, Instant};
 use config::Config;
 use mic::MicSettings;
 use thx::ThxEq;
-use worker::Target;
 
 #[cfg(windows)]
 extern "system" {
@@ -145,7 +144,6 @@ fn run_silent() {
     if let Err(e) = dev.apply_profile(cfg.profile()) {
         dlog!("error al aplicar: {e}");
     }
-    worker::apply_default_devices(&Target::from_config(&cfg));
 }
 
 fn run_watch(silent: bool) {
@@ -269,7 +267,6 @@ fn run_watch(silent: bool) {
                 }
             }
             if !busy {
-                worker::apply_default_devices(&Target::from_config(&cfg));
                 applied = true;
             }
         }
@@ -402,8 +399,6 @@ fn run_apply() {
             std::process::exit(1);
         }
     }
-
-    worker::apply_default_devices(&Target::from_config(&cfg));
 }
 
 fn run_import(path: Option<&str>) {

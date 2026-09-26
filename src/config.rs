@@ -136,9 +136,6 @@ pub enum EqMethod {
 pub struct Config {
     pub profiles: Vec<Profile>,
     pub active: usize,
-    /// Windows endpoint IDs to make default on connect; empty = don't change.
-    pub default_speaker: String,
-    pub default_microphone: String,
     /// How long `rzr apply` waits for the dongle.
     pub wait_timeout_ms: u32,
     /// Send Synapse's startup frames (dongle query, 0x9E = 0) before a full
@@ -159,8 +156,6 @@ impl Default for Config {
         Self {
             profiles: vec![Profile::default()],
             active: 0,
-            default_speaker: String::new(),
-            default_microphone: String::new(),
             wait_timeout_ms: 5000,
             send_legacy_config: true,
             eq_status: 0,

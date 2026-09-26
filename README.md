@@ -26,7 +26,7 @@ Al conectar los BlackShark V2 Pro sin Synapse, el audio suena bajo y plano: los 
 | No molestar (bloquear llamadas por Bluetooth) | Headset | ✅ |
 | Batería, carga, estado del botón de silencio, firmware, serie | Headset (lectura) | ✅ |
 | Volumen de salida y del micrófono, silenciar | Windows | ✅ |
-| Dispositivo de salida/entrada predeterminado al conectar | Windows | ✅ |
+| Elegir el dispositivo de salida/entrada predeterminado (solo al elegirlo; nunca solo) | Windows | ✅ |
 | Varios perfiles, importar perfiles de Synapse (`.synapse4`) | rzr | ✅ |
 | Iniciar con Windows y aplicar el perfil al conectar/reconectar | rzr | ✅ |
 | Registro de caídas de conexión (hora y duración de cada corte) | rzr | ✅ |
