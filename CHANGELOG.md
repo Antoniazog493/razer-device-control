@@ -13,6 +13,7 @@ Cambios que nota quien usa rzr. Formato basado en [Keep a Changelog](https://kee
 - Registro de caídas del enlace (`conexion.log`) con resumen en ENERGÍA.
 - Prueba guiada del ecualizador y registro de depuración (`debug.log`) en AJUSTES › DIAGNÓSTICO.
 - MEJORAS muestra el estado de THX (Bass Boost, Normalización, Claridad de voz, Spatial, sus niveles y el preset de THX) y permite cambiarlo todo sin tener Synapse abierto: activar o desactivar Bass Boost, Normalización, Claridad de voz y THX Spatial Audio, y el nivel de Bass Boost, Normalización y Claridad de voz.
+- El ecualizador se oye: con THX instalado, cada preset (Juego, Película, Música, Personalizado y los Esports) aplica también su curva en THX, como Synapse. La curva se mantiene al activar o desactivar THX Spatial Audio.
 - Script de captura (`tools/capturar-synapse.ps1`) con fases para Synapse, las mejoras de Windows, THX y el servicio de THX (`-Fase thx-servicio`, solo lectura).
 - Documentación del proyecto: estado, arquitectura, hallazgos, reglas y decisiones.
 
@@ -28,7 +29,7 @@ Cambios que nota quien usa rzr. Formato basado en [Keep a Changelog](https://kee
 - Las caídas del enlace se detectan al instante. El aviso del headset se perdía cuando llegaba en el mismo paquete que un mensaje corto del dongle, y `conexion.log` anotaba la caída unos segundos tarde y con una duración menor a la real.
 
 ### Conocido
-- La curva Personalizada se guarda en el headset pero todavía no se oye (en investigación; ver `docs/ESTADO.md`).
+- Sin THX instalado, la curva Personalizada se guarda en el headset pero no se oye (en investigación; ver `docs/ESTADO.md`).
 - El sidetone se envía y el headset lo confirma, pero no se oye.
 
 ## [0.1.0] — 2026-03-16

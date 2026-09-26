@@ -14,6 +14,9 @@ const FIXED32: u8 = 5;
 pub mod state {
     pub const SEQUENCE_NUMBER: u32 = 1;
     pub const SPATIAL_ENABLED: u32 = 2;
+    pub const HARDWARE_ID: u32 = 3;
+    pub const OUTPUT_DEVICE: u32 = 4;
+    pub const PRESET_NAME: u32 = 5;
     pub const DRC_ENABLED: u32 = 9;
     pub const DRC_LEVEL: u32 = 10;
     pub const BASS_BOOST: u32 = 13;
@@ -215,6 +218,24 @@ pub fn next_state(current: &[u8], patches: &[Patch]) -> Result<Vec<u8>, String> 
     Ok(thx_message("State", &body))
 }
 
+/// `thx.sa.SetPreset { sequence_number = 1; PresetKey key = 3 }`, for the
+/// preset `name` of the device described by the service's `current` state.
+pub fn set_preset(current: &[u8], name: &str) -> Result<Vec<u8>, String> {
+    let seq = uint(current, state::SEQUENCE_NUMBER)?;
+    // PresetKey { name = 1; spatial_enabled = 3; output_device = 4; hardware_id = 5 }
+    let mut key = Vec::new();
+    put_bytes(&mut key, 1, name.as_bytes());
+    if uint(current, state::SPATIAL_ENABLED)? != 0 {
+        put_uint(&mut key, 3, 1);
+    }
+    put_bytes(&mut key, 4, string(current, state::OUTPUT_DEVICE)?.as_bytes());
+    put_bytes(&mut key, 5, string(current, state::HARDWARE_ID)?.as_bytes());
+    let mut v = Vec::new();
+    put_uint(&mut v, 1, seq + 1);
+    put_bytes(&mut v, 3, &key);
+    Ok(thx_message("SetPreset", &v))
+}
+
 /// The service's answer: `thx.sa.StateChangeResult { status = 1; msg = 2; State state = 3 }`.
 #[derive(Debug, PartialEq)]
 pub struct Reply {
@@ -270,7 +291,7 @@ mod tests {
         assert_eq!((r.status, r.msg.as_str()), (0, ""));
         assert_eq!(uint(&r.state, state::SEQUENCE_NUMBER).unwrap(), 79);
         assert_eq!(uint(&r.state, state::SPATIAL_ENABLED).unwrap(), 1);
-        assert_eq!(string(&r.state, 5).unwrap(), "Custom", "preset_name");
+        assert_eq!(string(&r.state, state::PRESET_NAME).unwrap(), "Custom");
         assert_eq!(uint(&r.state, state::DRC_ENABLED).unwrap(), 1);
         assert_eq!(double(&r.state, state::DRC_LEVEL).unwrap(), 100.0);
         assert_eq!(double(&r.state, state::BASS_BOOST).unwrap(), 100.0);
@@ -322,6 +343,22 @@ mod tests {
         let same = inner_state(&next_state(&current, &[]).unwrap());
         assert_eq!(same.len(), current.len());
         assert_eq!(fields(&same).unwrap()[1..], fields(&current).unwrap()[1..]);
+    }
+
+    #[test]
+    fn set_preset_names_this_device() {
+        let current = captured_state();
+        let msg = set_preset(&current, "Music Mode").unwrap();
+        let Some(Value::Bytes(any)) = field(&fields(&msg).unwrap(), 1) else { panic!() };
+        let any = fields(any).unwrap();
+        assert_eq!(field(&any, 1), Some(Value::Bytes(b"type.googleapis.com/thx.sa.SetPreset")));
+        let Some(Value::Bytes(v)) = field(&any, 2) else { panic!() };
+        assert_eq!(uint(v, 1).unwrap(), 80);
+        let Some(Value::Bytes(key)) = field(&fields(v).unwrap(), 3) else { panic!() };
+        assert_eq!(string(key, 1).unwrap(), "Music Mode");
+        assert_eq!(uint(key, 3).unwrap(), 1);
+        assert_eq!(string(key, 4).unwrap(), "Headphones");
+        assert_eq!(string(key, 5).unwrap(), r"usb\1532\0555");
     }
 
     #[test]

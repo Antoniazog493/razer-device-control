@@ -9,6 +9,9 @@
 //! - its COM interface (`IVSSrvTHXSettings`) for what it offers: the THX
 //!   Spatial Audio, Bass Boost and Voice Clarity switches (ADR 0004);
 //! - ZeroMQ, as Synapse does, for the rest: Sound Normalization and levels.
+//!
+//! THX also has its own software EQ, with its own presets. Like Synapse, rzr
+//! picks the THX preset and curve that go with the headset's (ADR 0006).
 
 #[cfg_attr(not(windows), allow(dead_code))]
 mod proto;
@@ -16,6 +19,8 @@ mod proto;
 mod zmtp;
 
 use serde::Deserialize;
+
+use crate::protocol::{EqPreset, EQ_BANDS};
 
 /// Registry key (under HKLM) with the properties of an output endpoint, from
 /// its Core Audio ID (`{0.0.0.00000000}.{guid}`; `{0.0.1…}` are inputs).
@@ -47,6 +52,8 @@ pub struct ThxState {
     /// Voice Clarity.
     pub dialog_enhancement_enabled: bool,
     pub dialog_enhancement: f32,
+    /// The active THX preset's EQ, in the service's 31-value layout.
+    pub eq_curve: Vec<f32>,
 }
 
 /// Parse the JSON the THX service stores for the endpoint.
@@ -246,6 +253,58 @@ mod zmq {
             Err("el servicio de THX respondió, pero su estado no muestra el cambio".into())
         }
     }
+
+    /// Make `name` the active THX preset, unless it already is.
+    pub fn set_preset(addr: SocketAddr, name: &str) -> Result<(), String> {
+        let mut s = Session::open(addr)?;
+        if proto::string(&s.state, proto::state::PRESET_NAME)? == name {
+            return Ok(());
+        }
+        let reply = s.call(&proto::set_preset(&s.state, name)?)?;
+        match proto::string(&reply.state, proto::state::PRESET_NAME)? {
+            now if now == name => Ok(()),
+            now => Err(format!("el servicio de THX sigue en el preset «{now}» y no en «{name}»")),
+        }
+    }
+}
+
+/// The THX preset and EQ curve that go with a headset preset, as Synapse
+/// picks them: Game, Movie and Music have THX presets of their own; Custom
+/// and the Esports presets all use THX's `Custom` with their curve.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ThxEq {
+    pub preset: &'static str,
+    pub curve: [i8; EQ_BANDS],
+}
+
+impl ThxEq {
+    pub fn new(preset: EqPreset, curve: [i8; EQ_BANDS]) -> Self {
+        let preset = match preset {
+            EqPreset::Game => "Game Mode",
+            EqPreset::Movie => "Cinema Mode",
+            EqPreset::Music => "Music Mode",
+            _ => "Custom",
+        };
+        Self { preset, curve }
+    }
+
+    /// The curve as the service takes it: a 0, then each band three times.
+    pub fn gains(&self) -> [f32; 31] {
+        let mut g = [0.0; 31];
+        for (i, &db) in self.curve.iter().enumerate() {
+            g[1 + i * 3..4 + i * 3].fill(f32::from(db));
+        }
+        g
+    }
+
+    pub fn shown_in(&self, s: &ThxState) -> bool {
+        s.preset_name == self.preset && s.eq_curve == self.gains()
+    }
+
+    pub fn apply(&self, s: &mut ThxState) {
+        s.preset_name = self.preset.to_string();
+        s.eq_curve = self.gains().to_vec();
+    }
 }
 
 /// The THX preset's name as the page shows it.
@@ -264,7 +323,7 @@ pub use imp::*;
 
 #[cfg(windows)]
 mod imp {
-    use super::{parse_state, properties_key, zmq, ThxChange, ThxOption, ThxState};
+    use super::{parse_state, properties_key, zmq, ThxChange, ThxEq, ThxOption, ThxState};
     use std::net::SocketAddr;
     use windows::core::{interface, s, IUnknown, IUnknown_Vtbl, GUID, HRESULT, PCSTR};
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_LOCAL_SERVER};
@@ -354,6 +413,29 @@ mod imp {
             }
         }
 
+        /// Pick the THX preset (ZeroMQ) and set its curve (COM), as Synapse
+        /// does when a headset preset is chosen (ADR 0006).
+        pub fn set_eq(&self, eq: &ThxEq) -> Result<(), String> {
+            zmq::set_preset(self.zmq, eq.preset)?;
+            let gains = eq.gains();
+            let mut sz = 0u64;
+            let mut msg = vec![0u8; INBAND_LEN];
+            unsafe { self.com.set_current_mode_eq_gains(ORIGINATOR, gains.as_ptr(), &mut sz, msg.as_mut_ptr()) }
+                .ok()
+                .map_err(|e| format!("el servicio de THX no aplicó la curva: {e}"))?;
+            // The type library doesn't give the buffer's size; 256 is what the
+            // checks on the user's PC used.
+            let mut back = [0f32; 256];
+            unsafe { self.com.get_current_mode_eq_gains(back.as_mut_ptr()) }
+                .ok()
+                .map_err(|e| format!("no se pudo leer la curva de THX: {e}"))?;
+            if back[..gains.len()] == gains {
+                Ok(())
+            } else {
+                Err("el servicio de THX no guardó la curva".into())
+            }
+        }
+
         /// Switch an option by COM and read it back from the service.
         fn com_set(&self, option: ThxOption, on: bool) -> Result<bool, String> {
             let s = &self.com;
@@ -387,7 +469,7 @@ mod imp {
 /// Non-Windows builds (development only): no THX.
 #[cfg(not(windows))]
 mod imp {
-    use super::{ThxChange, ThxState};
+    use super::{ThxChange, ThxEq, ThxState};
 
     pub fn read_state(_endpoint_id: &str) -> Option<Result<ThxState, String>> {
         None
@@ -400,6 +482,9 @@ mod imp {
             Err("THX solo existe en Windows".into())
         }
         pub fn apply(&self, _change: ThxChange) -> Result<(), String> {
+            Err("THX solo existe en Windows".into())
+        }
+        pub fn set_eq(&self, _eq: &ThxEq) -> Result<(), String> {
             Err("THX solo existe en Windows".into())
         }
     }
@@ -435,6 +520,7 @@ mod tests {
                 drc_level: 40.0,
                 dialog_enhancement_enabled: false,
                 dialog_enhancement: 100.0,
+                eq_curve: [[0.0, 1.0, 1.0, 1.0].as_slice(), &[0.0; 27]].concat(),
             }
         );
     }
@@ -514,6 +600,25 @@ mod tests {
         assert_eq!(properties_key("{0.0.1.00000000}.{68854153-5b36-4efa-b61a-6ffb850dd6fa}"), None);
         assert_eq!(properties_key("demo-out"), None);
         assert_eq!(properties_key(r"{0.0.0.00000000}.{..\..\..\..\..\..\..\..\..\..\..\}"), None);
+    }
+
+    #[test]
+    fn thx_eq_like_synapse() {
+        let game = ThxEq::new(EqPreset::Game, EqPreset::Game.curve().unwrap());
+        assert_eq!(game.preset, "Game Mode");
+        assert_eq!(ThxEq::new(EqPreset::Movie, [0; 10]).preset, "Cinema Mode");
+        assert_eq!(ThxEq::new(EqPreset::Music, [0; 10]).preset, "Music Mode");
+        assert_eq!(ThxEq::new(EqPreset::Custom, [0; 10]).preset, "Custom");
+        assert_eq!(ThxEq::new(EqPreset::Csgo, [0; 10]).preset, "Custom");
+        // Music as the service stores it (docs/HALLAZGOS.md, `eqCurve`).
+        let music = ThxEq::new(EqPreset::Music, EqPreset::Music.curve().unwrap());
+        let stored = [0, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 0, 0, 0];
+        assert_eq!(music.gains(), stored.map(|v: i8| f32::from(v)));
+
+        let mut s = parse_state(SAMPLE).unwrap();
+        assert!(!music.shown_in(&s), "same preset, other curve");
+        music.apply(&mut s);
+        assert!(music.shown_in(&s) && !game.shown_in(&s));
     }
 
     #[test]

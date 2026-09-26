@@ -79,6 +79,8 @@
     p.has_curve = !p.editable;
     p.curve = p.editable ? custom : curves[p.preset];
     S.device.preset = labels[p.preset];
+    // Like rzr with THX installed: the headset preset also picks THX's.
+    S.thx.preset = { game: "Juego", movie: "Película", music: "Música" }[p.preset] || "Personalizado";
   }
 
   const handlers = {

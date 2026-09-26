@@ -12,7 +12,7 @@ use crate::connlog::ConnLog;
 use crate::device::{self, Device, Options, Status};
 use crate::dlog;
 use crate::protocol::{self, EqPreset, EQ_BANDS};
-use crate::thx::{self, ThxChange, ThxState};
+use crate::thx::{self, ThxChange, ThxEq, ThxOption, ThxState};
 use crate::winaudio::{self, AudioDevice, Endpoint, Flow};
 
 const POLL_CONNECTED: Duration = Duration::from_secs(5);
@@ -601,8 +601,45 @@ const THX_POLL: Duration = Duration::from_secs(2);
 /// 1-3 s on the user's PC).
 const THX_CONFIRM: Duration = Duration::from_secs(6);
 
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ThxCmd {
     Change(ThxChange),
+    /// The THX preset and curve for the profile's headset preset (ADR 0006).
+    Eq(ThxEq),
+}
+
+impl ThxCmd {
+    fn apply(self, s: &mut ThxState) {
+        match self {
+            ThxCmd::Change(c) => c.apply(s),
+            ThxCmd::Eq(eq) => eq.apply(s),
+        }
+    }
+
+    fn shown_in(self, s: &ThxState) -> bool {
+        match self {
+            ThxCmd::Change(c) => c.shown_in(s),
+            ThxCmd::Eq(eq) => eq.shown_in(s),
+        }
+    }
+
+    fn label(self) -> String {
+        match self {
+            ThxCmd::Change(c) => c.label(),
+            ThxCmd::Eq(_) => "Ecualizador de THX".into(),
+        }
+    }
+}
+
+/// The commands to run from a batch that arrived together: only the last EQ
+/// counts (dragging the curve sends one per release), the rest in order.
+fn thx_batch(cmds: Vec<ThxCmd>) -> Vec<ThxCmd> {
+    let last_eq = cmds.iter().rposition(|c| matches!(c, ThxCmd::Eq(_)));
+    cmds.into_iter()
+        .enumerate()
+        .filter(|&(i, c)| !matches!(c, ThxCmd::Eq(_)) || Some(i) == last_eq)
+        .map(|(_, c)| c)
+        .collect()
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -630,6 +667,7 @@ pub fn spawn_thx_worker(demo: bool, notify: Notify) -> (Sender<ThxCmd>, Receiver
             notify,
             status: ThxStatus::default(),
             service: None,
+            eq: None,
             last_problem: String::new(),
         };
         if demo {
@@ -638,7 +676,12 @@ pub fn spawn_thx_worker(demo: bool, notify: Notify) -> (Sender<ThxCmd>, Receiver
         }
         loop {
             match cmd_rx.recv_timeout(THX_POLL) {
-                Ok(ThxCmd::Change(change)) => w.change(change),
+                Ok(first) => {
+                    let batch = std::iter::once(first).chain(cmd_rx.try_iter()).collect();
+                    for cmd in thx_batch(batch) {
+                        w.run(cmd);
+                    }
+                }
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
@@ -656,6 +699,9 @@ struct ThxWorker {
     notify: Notify,
     status: ThxStatus,
     service: Option<thx::Service>,
+    /// The last THX EQ asked for, put back after a Spatial switch: THX keeps
+    /// another curve per preset with Spatial on.
+    eq: Option<ThxEq>,
     /// Last problem logged, so a lasting one is logged once and not every poll.
     last_problem: String,
 }
@@ -709,44 +755,56 @@ impl ThxWorker {
     }
 
     /// Make a change, then wait until the service's stored state shows it.
-    fn change(&mut self, change: ThxChange) {
-        dlog!("THX: {change:?}");
+    fn run(&mut self, cmd: ThxCmd) {
+        if let ThxCmd::Eq(eq) = cmd {
+            self.eq = Some(eq);
+        }
+        let Some(before) = self.status.state.clone() else { return };
+        if cmd.shown_in(&before) {
+            return;
+        }
+        dlog!("THX: {cmd:?}");
         if self.demo {
             let mut status = self.status.clone();
             if let Some(s) = &mut status.state {
-                change.apply(s);
+                cmd.apply(s);
             }
             self.update(status);
             return;
         }
-        let Some(before) = self.status.state.clone() else { return };
         // Show the requested value while waiting; a failure puts back the real one.
         let mut pending = before.clone();
-        change.apply(&mut pending);
+        cmd.apply(&mut pending);
         self.update(ThxStatus { state: Some(pending), busy: true, ..self.status.clone() });
 
-        let result = match &self.service {
-            Some(service) => service.apply(change),
-            None => Err("el servicio de THX no responde".to_string()),
+        let result = match (&self.service, cmd) {
+            (Some(service), ThxCmd::Change(change)) => service.apply(change),
+            (Some(service), ThxCmd::Eq(eq)) => service.set_eq(&eq),
+            (None, _) => Err("el servicio de THX no responde".to_string()),
         };
         let error = match result {
-            Ok(()) => self.confirm(change, before.sequence_number),
+            Ok(()) => self.confirm(cmd, before.sequence_number),
             Err(e) => {
                 // Reconnect next time: the service may have restarted.
                 self.service = None;
                 Some(e)
             }
         };
+        let failed = error.is_some();
         if let Some(e) = error {
             dlog!("THX: {e}");
-            self.message(format!("{}: {e}", change.label()), true);
+            self.message(format!("{}: {e}", cmd.label()), true);
         }
         self.update(ThxStatus { busy: false, ..self.status.clone() });
         self.poll();
+        // Synapse doesn't do this, and its EQ seems to vanish when Spatial is switched.
+        if let (ThxCmd::Change(ThxChange::Switch(ThxOption::Spatial, _)), Some(eq), false) = (cmd, self.eq, failed) {
+            self.run(ThxCmd::Eq(eq));
+        }
     }
 
     /// Wait for the stored state to show the change. None when it does.
-    fn confirm(&mut self, change: ThxChange, seq_before: u64) -> Option<String> {
+    fn confirm(&mut self, change: ThxCmd, seq_before: u64) -> Option<String> {
         let deadline = Instant::now() + THX_CONFIRM;
         while Instant::now() < deadline {
             thread::sleep(Duration::from_millis(250));
@@ -773,6 +831,7 @@ fn demo_thx() -> ThxState {
         drc_level: 100.0,
         dialog_enhancement_enabled: false,
         dialog_enhancement: 100.0,
+        eq_curve: ThxEq::new(EqPreset::Music, EqPreset::Music.curve().unwrap_or_default()).gains().to_vec(),
     }
 }
 
@@ -800,5 +859,21 @@ fn demo_update(s: &mut AudioState, id: &str, f: impl Fn(&mut Endpoint)) {
         if e.id == id {
             f(e);
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::thx::ThxLevel;
+
+    #[test]
+    fn a_thx_batch_keeps_only_the_last_eq() {
+        let eq = |db| ThxCmd::Eq(ThxEq::new(EqPreset::Custom, [db; EQ_BANDS]));
+        let spatial = ThxCmd::Change(ThxChange::Switch(ThxOption::Spatial, true));
+        let bass = ThxCmd::Change(ThxChange::Level(ThxLevel::BassBoost, 40.0));
+        assert_eq!(thx_batch(vec![eq(1), spatial, eq(2), bass, eq(3)]), vec![spatial, bass, eq(3)]);
+        assert_eq!(thx_batch(vec![spatial, bass]), vec![spatial, bass]);
+        assert_eq!(thx_batch(vec![eq(1)]), vec![eq(1)]);
     }
 }

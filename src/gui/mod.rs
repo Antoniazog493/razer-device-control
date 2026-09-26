@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::{Config, EqMethod, EqMode, Profile};
 use crate::protocol::{self, EqPreset, EQ_BANDS};
-use crate::thx::{self, ThxChange, ThxLevel, ThxOption};
+use crate::thx::{self, ThxChange, ThxEq, ThxLevel, ThxOption};
 use crate::winaudio::{self, AudioDevice, Endpoint};
 use crate::worker::{
     self, AudioCmd, AudioState, Change, DevCmd, DevEvent, DeviceInfo, DiagCmd, Notify, Target, ThxCmd, ThxEvent,
@@ -210,10 +210,22 @@ impl App {
         self.changed = true;
     }
 
-    /// Save and push a change to the headset.
+    /// Save and push a change to the headset (and its EQ to THX).
     fn push(&mut self, change: Change) {
         self.mark_dirty();
         let _ = self.dev_tx.send(DevCmd::Update(Target::from_config(&self.cfg), change));
+        if matches!(change, Change::All | Change::Eq) {
+            self.sync_thx_eq();
+        }
+    }
+
+    /// Like Synapse, the headset preset also picks THX's preset and curve,
+    /// which is the EQ that is heard (ADR 0006).
+    fn sync_thx_eq(&mut self) {
+        if self.thx.service {
+            let p = self.profile();
+            let _ = self.thx_tx.send(ThxCmd::Eq(ThxEq::new(p.active_preset(), p.active_curve())));
+        }
     }
 
     /// Save a change the headset doesn't need right now.
@@ -260,6 +272,7 @@ impl App {
                     let wanted = self.profile().active_preset();
                     self.profile_mut().select_preset(preset);
                     self.mark_dirty();
+                    self.sync_thx_eq();
                     if from_button {
                         self.toast(format!("Preset cambiado desde el headset: {}", preset.label()), false);
                     } else {

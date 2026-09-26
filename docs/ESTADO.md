@@ -22,8 +22,8 @@ Leyenda de verificación:
 | Leer batería, carga, enlace, preset activo | ✅ | |
 | Eventos del headset (botón EQ, enlace, silencio) | ✅ | El botón EQ envía 07 → 09 → 08 → FF. |
 | Elegir Juego / Película / Música | ✅ | El cambio se oye. |
-| Curva Personalizada (en el headset) | ❌ | Se guarda y se lee igual, pero **no se oye** (confirmado otra vez el 2026-09-26). El EQ que se oye en Synapse es el de THX: ver "EQ de THX" abajo. |
-| Presets Esports (elegir y escribir su curva) | 🟡 ⏳ | Incluido en la ronda 2. |
+| Curva Personalizada (en el headset) | ❌ | Se guarda y se lee igual, pero **no se oye** (confirmado otra vez el 2026-09-26). Con THX instalado no hace falta: rzr aplica la misma curva en THX y esa sí se oye (ver "EQ como Synapse" abajo). |
+| Presets Esports (elegir y escribir su curva) | 🟡 ⏳ | En el headset, incluido en la ronda 2. Con THX se oyen (ver "EQ como Synapse"). |
 | Sidetone | ❌ | El headset confirma el encendido y el nivel (lo lee de vuelta), pero **no se oye**. Con Synapse sí se oye: además lo activa en THX (ver "Sigue" 3). |
 | No molestar, Apagado automático | 🟡 | Comandos verificados por OpenRazer en este modelo; no confirmado en este headset. |
 | Firmware, número de serie, firmware del dongle | 🟡 | |
@@ -44,7 +44,7 @@ Leyenda de verificación:
 | THX: Bass Boost (activar/desactivar) | ✅ | Por COM. Al 50 casi no se notaba; con el nivel en 100 se oye. |
 | THX: niveles de Bass Boost y Claridad de voz | ✅ | Por ZeroMQ ([ADR 0005](adr/0005-thx-por-zeromq.md)), con Synapse cerrado. Se oyó 0 ↔ 100 en los dos (2026-09-26); cada cambio se confirma en el JSON en menos de 1 s. |
 | THX: Normalización (activar/desactivar y nivel) | 🟡 ⏳ | Por ZeroMQ, igual que Synapse. El servicio la guarda (confirmado en el JSON), pero con música **no se notó**, ni desde rzr ni desde un script (prueba a ciegas del 2026-09-26: de tres cambios solo se notó el de Spatial). Falta una prueba mejor (ver "Esperando al usuario"). |
-| EQ de THX (curva por software, `SetCurrentModeEQGains`) | ✅ | Probado con un script por COM, aún **no está en rzr**: una curva de "teléfono" se oyó al instante y se restauró la curva Música. Es el EQ que Synapse cambia al editar Juego/Película/Música. |
+| EQ como Synapse: el preset del headset elige también el preset y la curva de THX | ✅ | [ADR 0006](adr/0006-eq-como-synapse.md). Oído el 2026-09-26: Juego/Película/Música, los cinco Esports (THX `Custom` con su curva) y la curva Personalizada al arrastrarla; cada cambio queda en THX en menos de 1 s. Al cambiar Spatial, rzr vuelve a poner la curva (THX la cambiaba por otra plana). Con el botón EQ del headset: 🟡 sin probar. |
 | Prueba guiada del EQ (ronda 2) | 🟡 ⏳ | |
 | Registro de depuración (`debug.log`) | ✅ | Registra también los cambios de THX. |
 
@@ -68,7 +68,7 @@ Leyenda de verificación:
 El sondeo de Synapse del 2026-09-26 mostró qué hace Synapse con THX instalado (todo se oyó). rzr lo imitará ([HALLAZGOS.md › Ecualizador](HALLAZGOS.md#ecualizador), [Micrófono](HALLAZGOS.md#micrófono)).
 
 1. ~~Niveles de THX por ZeroMQ~~: hecho el 2026-09-26 (cliente propio en `src/thx/`, [ADR 0005](adr/0005-thx-por-zeromq.md), sliders en MEJORAS). Queda confirmar de oído la normalización ("Esperando al usuario" 1).
-2. **EQ como Synapse:** Juego/Película/Música eligen el preset del headset **y** el de THX con su curva; Personalizado escribe la curva en el headset y en el preset `Custom` de THX. Registrar la decisión en un ADR.
+2. ~~EQ como Synapse~~: hecho el 2026-09-26 ([ADR 0006](adr/0006-eq-como-synapse.md)). Falta probar el botón EQ del headset con rzr abierto (debe cambiar también el preset de THX).
 3. **Sidetone como Synapse:** además de `0x98`/`0x99`, fijar el nivel en THX (`IVSSrvSettings::SetInputSidetoneLevel`, nivel = slider × 31,62 / 10 000) y **activarlo**: Synapse lo hace con `SetStartCaptureStatus`, que no se ve en `IVSSrvSettings`. Primero probar de oído si basta con `SetInputSidetoneState(1)`; si no, abrir una captura del micrófono por WASAPI mientras el sidetone esté encendido (hipótesis en [HALLAZGOS.md](HALLAZGOS.md#micrófono)).
 4. **Micrófono por THX** (`IVSSrvSettings`, parámetros ya identificados en [HALLAZGOS.md](HALLAZGOS.md#micrófono)): EQ con presets (Default, MicBoost, Broadcast, Conference y Personalizado de −12 a +12, con `0x96` al headset), normalización (14/15), claridad de voz (10/11), reducción de ruido (6/7) y puerta de voz (2/3, en dB). Probar de oído grabando o con el sidetone (aunque el de Synapse no pasa por las mejoras).
 5. **Separar THX de Synapse.** Respaldar los instaladores de THX de `C:\ProgramData\Package Cache` (fuera del repo), desinstalar Synapse, reinstalar solo THX y confirmar que el efecto, `VSSrv` y rzr siguen funcionando ([HALLAZGOS.md](HALLAZGOS.md#paquete-de-driver)). Ya no hace falta Synapse para sondear; conviene hacerlo cuando 1 a 4 funcionen en rzr, por si hay que volver a comparar.

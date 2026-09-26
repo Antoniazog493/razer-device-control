@@ -69,7 +69,7 @@ Ejemplo: el usuario elige el preset CS2.
 
 1. `app.js` envía `{"cmd": "preset", "preset": "csgo"}` con `window.ipc.postMessage`.
 2. `window.rs` recibe el texto, lo convierte en `Msg::Preset` y llama a `App::handle`.
-3. `App` cambia el perfil, programa el guardado (500 ms después) y envía `DevCmd::Update(Target, Change::Eq)` al hilo del headset.
+3. `App` cambia el perfil, programa el guardado (500 ms después) y envía `DevCmd::Update(Target, Change::Eq)` al hilo del headset. Si THX está instalado, envía también `ThxCmd::Eq` al hilo de THX, con el preset y la curva de THX correspondientes ([ADR 0006](adr/0006-eq-como-synapse.md)).
 4. El hilo del headset llama a `Device::set_eq`, que toma el candado, envía la secuencia y lee el preset para confirmarlo.
 5. El hilo avisa (`DevEvent` + `Notify`). `window.rs` despierta, `App::pump` recoge el aviso y, como el estado cambió, la página recibe `rzr.state({...})`.
 6. `app.js` redibuja con el estado nuevo. La página nunca asume que un cambio funcionó: muestra lo que dice el estado.
@@ -88,7 +88,7 @@ Ejemplo: el usuario elige el preset CS2.
 - **Hilo principal:** el bucle de eventos de la ventana (tao). Todo lo de `App` corre aquí; nunca se bloquea con E/S del headset.
 - **Hilo del headset:** único dueño del `Device`. Recibe `DevCmd` y agrupa los que llegan juntos (varios cambios se aplican una vez).
 - **Hilo de audio:** habla con Core Audio de Windows (COM). Cada 2 s envía el estado de volumen y dispositivos.
-- **Hilo de THX:** cada 2 s lee el estado de THX. Al cambiar una opción espera (hasta 6 s) a que el servicio de THX la guarde; va aparte para no frenar el volumen mientras tanto.
+- **Hilo de THX:** cada 2 s lee el estado de THX. Al cambiar una opción o el EQ de THX espera (hasta 6 s) a que el servicio de THX lo guarde; va aparte para no frenar el volumen mientras tanto. De varias curvas que llegan juntas solo aplica la última.
 - **Entre procesos:**
   - `Local\rzr_hid_bus`: candado alrededor de cada secuencia. El panel y el proceso en segundo plano tienen el dongle abierto a la vez; sin él, una consulta de uno puede cortar la escritura del otro.
   - `Global\rzr_blackshark_v2_pro`: garantiza un solo proceso en segundo plano. El panel lo consulta para no duplicar el registro de caídas.

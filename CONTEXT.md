@@ -73,7 +73,7 @@ _Evitar:_ "driver de THX" para referirse a sus ajustes; el driver es solo el paq
 
 **Windows Sonic** (Windows Sonic): el sonido espacial propio de Windows. Choca con THX.
 
-**Preset de THX** (THX preset): un ajuste del ecualizador por software de THX: `Game Mode`, `Cinema Mode`, `Music Mode` o `Custom`. Es distinto del preset del headset, aunque Synapse elige los dos a la vez.
+**Preset de THX** (THX preset): un ajuste del ecualizador por software de THX: `Game Mode`, `Cinema Mode`, `Music Mode` o `Custom`. Es distinto del preset del headset, aunque Synapse (y rzr) eligen los dos a la vez: Juego, Película y Música tienen el suyo, y Personalizado y los Esports usan `Custom` con su curva.
 _Evitar:_ decir solo "preset" cuando se habla de THX.
 
 **Estado de THX** (THX state): el JSON con todos los ajustes del motor THX (espacial, Bass Boost, normalización, claridad de voz, preset de THX, curva) que queda en el registro de la salida de los audífonos.

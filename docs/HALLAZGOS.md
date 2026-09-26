@@ -26,7 +26,9 @@ Resultados en el headset del usuario (ronda 1 de la prueba guiada):
   - **Juego / Película / Música:** al headset el selector (`0x93` = 7 / 9 / 8) y la familia (`0x9D` = 1); a THX `SetPreset` (`Game Mode`, `Cinema Mode`, `Music Mode`) y la curva del preset de THX.
   - **Personalizado:** al headset el selector 255, la familia y la curva (`0x95`) en cada cambio; a THX `SetPreset` `Custom` y **la misma curva** (−5 a +5 dB). Restablecer manda todo a 0 por los dos lados.
   - **Al abrir**, Synapse vuelve a escribir las curvas de los cinco presets Esports y la Personalizada en sus ranuras, y deja el preset activo.
-  - Con THX Spatial activado, THX guarda otra curva por preset: al activarlo, `eqCurve` pasó a plana y al desactivarlo volvió la anterior (las copias `-1-`/`-0-` de `UserState`).
+  - Con THX Spatial activado, THX guarda otra curva por preset: al activarlo, `eqCurve` pasó a plana y al desactivarlo volvió la anterior (las copias `-1-`/`-0-` de `UserState`). **Synapse no vuelve a mandar la curva** al cambiar Spatial (logs del 2026-09-25), así que su EQ cambia al activarlo. rzr sí la vuelve a mandar ([ADR 0006](adr/0006-eq-como-synapse.md)).
+  - **Esports** (logs de Synapse del 2026-09-25): preset `Custom` de THX y la curva del preset Esports, igual que Personalizado. Synapse solo manda `SetRenderPreset` cuando cambia el preset de THX; la curva la manda siempre.
+  - **Hecho en rzr** (2026-09-26, oído): preset de THX por ZeroMQ (`SetPreset`; la respuesta trae el estado con el preset nuevo) y curva por COM. Todo se oyó: los presets Estándar, los Esports y la curva Personalizada al arrastrarla.
 - Cambiar `0x9E` no cambia nada.
 - Cambiar entre Juego y Película **sí se oye**.
 
