@@ -1,100 +1,45 @@
-/// Windows registry settings for rzr.
-/// All settings stored in HKCU\SOFTWARE\rzr
+/// Windows registry: migration of the pre-GUI settings (HKCU\SOFTWARE\rzr)
+/// and the "start with Windows" entry (HKCU\...\CurrentVersion\Run).
 
-use winreg::enums::*;
-use winreg::RegKey;
+use crate::config::Config;
 
-const REG_PATH: &str = "SOFTWARE\\rzr";
+/// Build a Config from the settings older rzr versions kept in the registry.
+#[cfg(windows)]
+pub fn legacy_config() -> Option<Config> {
+    use winreg::enums::*;
+    use winreg::RegKey;
 
-pub struct Settings {
-    pub eq_enabled: bool,
-    pub eq_bands: [i8; 10],
-    pub volume: u8,
-    pub enhancement: bool,
-    pub wait_timeout_ms: u32,
-    pub default_speaker: String,    // endpoint ID, empty = don't change
-    pub default_microphone: String, // endpoint ID, empty = don't change
-}
+    let key = RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey("SOFTWARE\\rzr")
+        .ok()?;
+    let mut cfg = Config::default();
 
-impl Default for Settings {
-    fn default() -> Self {
-        Self {
-            eq_enabled: true,
-            eq_bands: [1, -2, 1, -3, 1, -3, -5, 2, 2, 3],
-            volume: 255,
-            enhancement: true,
-            wait_timeout_ms: 5000,
-            default_speaker: String::new(),
-            default_microphone: String::new(),
+    if let Ok(v) = key.get_value::<String, _>("eq_bands") {
+        if let Some(bands) = parse_eq_bands(&v) {
+            cfg.profiles[0].custom_eq = bands;
         }
     }
+    if let Ok(v) = key.get_value::<u32, _>("wait_timeout_ms") {
+        cfg.wait_timeout_ms = v;
+    }
+    if let Ok(v) = key.get_value::<String, _>("default_speaker") {
+        cfg.default_speaker = v;
+    }
+    if let Ok(v) = key.get_value::<String, _>("default_microphone") {
+        cfg.default_microphone = v;
+    }
+    // "volume" was really the preset selector (255 = custom) and "enhancement"
+    // the preset-family flag, so neither carries over.
+    Some(cfg)
 }
 
-impl Settings {
-    /// Load settings from registry. Missing keys get defaults.
-    pub fn load() -> Self {
-        let mut s = Self::default();
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let key = match hkcu.open_subkey(REG_PATH) {
-            Ok(k) => k,
-            Err(_) => return s,
-        };
-
-        if let Ok(v) = key.get_value::<u32, _>("eq_enabled") {
-            s.eq_enabled = v != 0;
-        }
-        if let Ok(v) = key.get_value::<String, _>("eq_bands") {
-            if let Some(bands) = parse_eq_bands(&v) {
-                s.eq_bands = bands;
-            }
-        }
-        if let Ok(v) = key.get_value::<u32, _>("volume") {
-            s.volume = v.min(255) as u8;
-        }
-        if let Ok(v) = key.get_value::<u32, _>("enhancement") {
-            s.enhancement = v != 0;
-        }
-        if let Ok(v) = key.get_value::<u32, _>("wait_timeout_ms") {
-            s.wait_timeout_ms = v;
-        }
-        if let Ok(v) = key.get_value::<String, _>("default_speaker") {
-            s.default_speaker = v;
-        }
-        if let Ok(v) = key.get_value::<String, _>("default_microphone") {
-            s.default_microphone = v;
-        }
-
-        s
-    }
-
-    /// Save all settings to registry.
-    pub fn save(&self) -> Result<(), String> {
-        let hkcu = RegKey::predef(HKEY_CURRENT_USER);
-        let (key, _) = hkcu
-            .create_subkey(REG_PATH)
-            .map_err(|e| format!("Cannot create registry key: {e}"))?;
-
-        key.set_value("eq_enabled", &(self.eq_enabled as u32))
-            .map_err(|e| format!("Registry write failed: {e}"))?;
-        key.set_value("eq_bands", &format_eq_bands(&self.eq_bands))
-            .map_err(|e| format!("Registry write failed: {e}"))?;
-        key.set_value("volume", &(self.volume as u32))
-            .map_err(|e| format!("Registry write failed: {e}"))?;
-        key.set_value("enhancement", &(self.enhancement as u32))
-            .map_err(|e| format!("Registry write failed: {e}"))?;
-        key.set_value("wait_timeout_ms", &self.wait_timeout_ms)
-            .map_err(|e| format!("Registry write failed: {e}"))?;
-        key.set_value("default_speaker", &self.default_speaker)
-            .map_err(|e| format!("Registry write failed: {e}"))?;
-        key.set_value("default_microphone", &self.default_microphone)
-            .map_err(|e| format!("Registry write failed: {e}"))?;
-
-        Ok(())
-    }
+#[cfg(not(windows))]
+pub fn legacy_config() -> Option<Config> {
+    None
 }
 
-/// Parse "1,-2,1,-3,1,-3,-5,2,2,3" into [i8; 10].
-pub fn parse_eq_bands(s: &str) -> Option<[i8; 10]> {
+#[cfg_attr(not(windows), allow(dead_code))]
+fn parse_eq_bands(s: &str) -> Option<[i8; 10]> {
     let parts: Vec<&str> = s.split(',').map(|p| p.trim()).collect();
     if parts.len() != 10 {
         return None;
@@ -106,17 +51,61 @@ pub fn parse_eq_bands(s: &str) -> Option<[i8; 10]> {
     Some(bands)
 }
 
-pub fn format_eq_bands(bands: &[i8; 10]) -> String {
-    bands
-        .iter()
-        .map(|b| b.to_string())
-        .collect::<Vec<_>>()
-        .join(",")
+#[cfg(windows)]
+const RUN_KEY: &str = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run";
+#[cfg(windows)]
+const RUN_VALUE: &str = "rzr";
+
+/// Whether rzr is registered to start (in background watch mode) at login.
+#[cfg(windows)]
+pub fn autostart_enabled() -> bool {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    RegKey::predef(HKEY_CURRENT_USER)
+        .open_subkey(RUN_KEY)
+        .and_then(|k| k.get_value::<String, _>(RUN_VALUE))
+        .is_ok()
 }
 
-/// EQ presets.
-pub const PRESET_FLAT: [i8; 10] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
-pub const PRESET_GAME: [i8; 10] = [-3, -3, -4, 0, 5, 5, 4, 1, 0, -1];
-pub const PRESET_MUSIC: [i8; 10] = [2, 2, 1, 1, 2, 3, 3, 3, 1, 0];
-pub const PRESET_MOVIE: [i8; 10] = [4, 4, 3, 0, -3, -1, 3, 5, 2, 1];
-pub const _PRESET_CUSTOM: [i8; 10] = [1, -2, 1, -3, 1, -3, -5, 2, 2, 3];
+#[cfg(windows)]
+pub fn set_autostart(enable: bool) -> Result<(), String> {
+    use winreg::enums::*;
+    use winreg::RegKey;
+    let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
+        .create_subkey(RUN_KEY)
+        .map_err(|e| format!("No se pudo abrir el registro: {e}"))?;
+    if enable {
+        let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+        let cmd = format!("\"{}\" --silent --watch", exe.display());
+        key.set_value(RUN_VALUE, &cmd)
+            .map_err(|e| format!("No se pudo escribir en el registro: {e}"))
+    } else {
+        match key.delete_value(RUN_VALUE) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
+            Err(e) => Err(format!("No se pudo escribir en el registro: {e}")),
+        }
+    }
+}
+
+#[cfg(not(windows))]
+pub fn autostart_enabled() -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn set_autostart(_enable: bool) -> Result<(), String> {
+    Err("Solo disponible en Windows".to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn parses_legacy_bands() {
+        assert_eq!(
+            super::parse_eq_bands("1,-2,1,-3,1,-3,-5,2,2,3"),
+            Some([1, -2, 1, -3, 1, -3, -5, 2, 2, 3])
+        );
+        assert_eq!(super::parse_eq_bands("1,2"), None);
+    }
+}
