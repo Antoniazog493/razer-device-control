@@ -30,7 +30,6 @@ Cambios que nota quien usa rzr. Formato basado en [Keep a Changelog](https://kee
 
 ### Conocido
 - Sin THX instalado, la curva Personalizada se guarda en el headset pero no se oye (en investigación; ver `docs/ESTADO.md`).
-- El sidetone se envía y el headset lo confirma, pero no se oye.
 
 ## [0.1.0] — 2026-03-16
 

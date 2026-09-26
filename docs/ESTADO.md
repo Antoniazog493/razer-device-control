@@ -24,7 +24,7 @@ Leyenda de verificación:
 | Elegir Juego / Película / Música | ✅ | El cambio se oye. |
 | Curva Personalizada (en el headset) | ❌ | Se guarda y se lee igual, pero **no se oye** (confirmado otra vez el 2026-09-26). Con THX instalado no hace falta: rzr aplica la misma curva en THX y esa sí se oye (ver "EQ como Synapse" abajo). |
 | Presets Esports (elegir y escribir su curva) | 🟡 ⏳ | En el headset, incluido en la ronda 2. Con THX se oyen (ver "EQ como Synapse"). |
-| Sidetone | ❌ | El headset confirma el encendido y el nivel (lo lee de vuelta), pero **no se oye**. Con Synapse sí se oye: además lo activa en THX (ver "Sigue" 3). |
+| Sidetone | ✅ | Oído el 2026-09-26 con Synapse cerrado, **solo con los comandos del headset** (`0x98`/`0x99`; el sidetone de THX seguía apagado): se enciende, se apaga y el volumen cambia (20 ↔ 100). Antes ese mismo día no se había oído (ver "Preguntas abiertas"). |
 | No molestar, Apagado automático | 🟡 | Comandos verificados por OpenRazer en este modelo; no confirmado en este headset. |
 | Firmware, número de serie, firmware del dongle | 🟡 | |
 | Registro de caídas del enlace | 🟡 | Una caída real (2026-09-26) quedó registrada, pero ~6 s tarde y con 1,6 s de duración en lugar de ~7,5 s: se perdía el aviso del headset. Corregido (el aviso se lee siempre); falta verlo en la próxima caída. |
@@ -69,7 +69,7 @@ El sondeo de Synapse del 2026-09-26 mostró qué hace Synapse con THX instalado 
 
 1. ~~Niveles de THX por ZeroMQ~~: hecho el 2026-09-26 (cliente propio en `src/thx/`, [ADR 0005](adr/0005-thx-por-zeromq.md), sliders en MEJORAS). Queda confirmar de oído la normalización ("Esperando al usuario" 1).
 2. ~~EQ como Synapse~~: hecho el 2026-09-26 ([ADR 0006](adr/0006-eq-como-synapse.md)). Falta probar el botón EQ del headset con rzr abierto (debe cambiar también el preset de THX).
-3. **Sidetone como Synapse:** además de `0x98`/`0x99`, fijar el nivel en THX (`IVSSrvSettings::SetInputSidetoneLevel`, nivel = slider × 31,62 / 10 000) y **activarlo**: Synapse lo hace con `SetStartCaptureStatus`, que no se ve en `IVSSrvSettings`. Primero probar de oído si basta con `SetInputSidetoneState(1)`; si no, abrir una captura del micrófono por WASAPI mientras el sidetone esté encendido (hipótesis en [HALLAZGOS.md](HALLAZGOS.md#micrófono)).
+3. ~~Sidetone como Synapse~~: no hizo falta; el sidetone del headset se oye con Synapse cerrado (2026-09-26). No se tocó el sidetone de THX. Si vuelve a fallar, el plan era fijar y activar el de THX (`IVSSrvSettings::SetInputSidetoneLevel`/`SetInputSidetoneState`, o abrir una captura del micrófono; ver [HALLAZGOS.md](HALLAZGOS.md#micrófono)).
 4. **Micrófono por THX** (`IVSSrvSettings`, parámetros ya identificados en [HALLAZGOS.md](HALLAZGOS.md#micrófono)): EQ con presets (Default, MicBoost, Broadcast, Conference y Personalizado de −12 a +12, con `0x96` al headset), normalización (14/15), claridad de voz (10/11), reducción de ruido (6/7) y puerta de voz (2/3, en dB). Probar de oído grabando o con el sidetone (aunque el de Synapse no pasa por las mejoras).
 5. **Separar THX de Synapse.** Respaldar los instaladores de THX de `C:\ProgramData\Package Cache` (fuera del repo), desinstalar Synapse, reinstalar solo THX y confirmar que el efecto, `VSSrv` y rzr siguen funcionando ([HALLAZGOS.md](HALLAZGOS.md#paquete-de-driver)). Ya no hace falta Synapse para sondear; conviene hacerlo cuando 1 a 4 funcionen en rzr, por si hay que volver a comparar.
 6. **Revisar la configuración de audio de Windows:** avisar si las mejoras de audio están desactivadas o Windows Sonic encendido, y ofrecer corregirlo.
@@ -96,6 +96,7 @@ El sondeo de Synapse del 2026-09-26 mostró qué hace Synapse con THX instalado 
 
 ## Preguntas abiertas
 
+- ¿Por qué el sidetone no se oyó en la primera prueba del 2026-09-26 y sí en la segunda? La diferencia más clara: en la segunda Synapse estaba cerrado. Si vuelve a fallar, anotar si Synapse estaba abierto.
 - ¿El headset necesita que el modo remoto quede encendido para que el EQ se oiga? ¿O su curva Personalizada solo se oye sin THX instalado?
 - ¿Qué hace realmente `0x9E` (Speaker Preset EQ Status)? En la ronda 1 no cambió nada.
 - ¿THX sigue sonando si se detiene el servicio de THX (`VSSrv`)? Detenerlo requiere administrador y permiso del usuario.
