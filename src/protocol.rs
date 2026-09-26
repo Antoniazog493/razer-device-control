@@ -165,12 +165,20 @@ pub fn frames(buf: &[u8]) -> Vec<Frame<'_>> {
     } else {
         (1, buf.len())
     };
+    // Each frame: "PI", 6 header bytes, a little-endian body size, then the
+    // body: cmd, flag and usually a data length and the data. Some bodies
+    // are just cmd and flag (the dongle's E3 link notice), so the frame is
+    // walked by its body size, never by the data length.
     let mut out = Vec::new();
-    while off + 13 <= end && buf[off] == b'P' && buf[off + 1] == b'I' {
-        let len = buf[off + 12] as usize;
-        let start = off + 13;
-        out.push(Frame { cmd: buf[off + 10], flag: buf[off + 11], data: &buf[start..(start + len).min(end)] });
-        off = start + len;
+    while off + 12 <= end && buf[off] == b'P' && buf[off + 1] == b'I' {
+        let size = u16::from_le_bytes([buf[off + 8], buf[off + 9]]) as usize;
+        let body = &buf[off + 10..(off + 10 + size).min(end)];
+        if body.len() >= 2 {
+            let data = body.get(3..).unwrap_or(&[]);
+            let len = body.get(2).map_or(0, |&l| l as usize).min(data.len());
+            out.push(Frame { cmd: body[0], flag: body[1], data: &data[..len] });
+        }
+        off += 10 + size;
     }
     out
 }
@@ -348,6 +356,21 @@ mod tests {
             0x00,
         ]);
         assert_eq!(parse_dongle_firmware(&fw).as_deref(), Some("2.4.1.0"));
+    }
+
+    #[test]
+    fn link_drop_event_after_a_short_frame() {
+        // Captured by rzr when the link dropped: the dongle's two-byte E3
+        // notice, then the "link down" event. Reading E3's body as having a
+        // length byte used to swallow the event.
+        let drop = report(&[
+            0x02, 0x1A, 0x50, 0x49, 0x0E, 0xC4, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0xE3, 0x00, 0x50, 0x49, 0x08, 0xC5,
+            0x59, 0x28, 0x15, 0x00, 0x04, 0x00, 0x20, 0x02, 0x01, 0x00,
+        ]);
+        let f = frames(&drop);
+        assert_eq!(f.len(), 2);
+        assert_eq!((f[0].cmd, f[0].flag, f[0].data), (0xE3, 0x00, &[][..]));
+        assert_eq!((f[1].cmd, f[1].flag, f[1].data), (CMD_WIRELESS, FLAG_EVENT, &[0u8][..]));
     }
 
     #[test]

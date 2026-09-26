@@ -25,9 +25,11 @@ Cambios que nota quien usa rzr. Formato basado en [Keep a Changelog](https://kee
 - El comando que se creía "volumen" (`0x93`) es el selector de preset; `0x9D` es la familia del preset.
 - El panel y el proceso en segundo plano ya no se interrumpen al usar el dongle a la vez.
 - Una sola lectura perdida ya no cuenta como desconexión.
+- Las caídas del enlace se detectan al instante. El aviso del headset se perdía cuando llegaba en el mismo paquete que un mensaje corto del dongle, y `conexion.log` anotaba la caída unos segundos tarde y con una duración menor a la real.
 
 ### Conocido
 - La curva Personalizada se guarda en el headset pero todavía no se oye (en investigación; ver `docs/ESTADO.md`).
+- El sidetone se envía y el headset lo confirma, pero no se oye. El Bass Boost de THX se activa, pero con el nivel en 50 no se nota.
 
 ## [0.1.0] — 2026-03-16
 
