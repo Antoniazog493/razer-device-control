@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::mic::MicSettings;
 use crate::protocol::{self, EqPreset, EQ_BANDS};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,6 +31,8 @@ pub struct Profile {
     pub auto_off_enabled: bool,
     /// 15-60 minutes.
     pub auto_off_minutes: u8,
+    /// Microphone enhancements (THX, plus the EQ preset index on the headset).
+    pub mic: MicSettings,
 }
 
 impl Default for Profile {
@@ -45,6 +48,7 @@ impl Default for Profile {
             dnd: false,
             auto_off_enabled: false,
             auto_off_minutes: 15,
+            mic: MicSettings::default(),
         }
     }
 }
@@ -109,6 +113,7 @@ impl Profile {
         if self.name.trim().is_empty() {
             self.name = "Perfil".to_string();
         }
+        self.mic.sanitize();
     }
 }
 

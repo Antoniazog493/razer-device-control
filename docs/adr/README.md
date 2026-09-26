@@ -18,6 +18,7 @@ Los ADR no se editan después de aceptados. Si la decisión cambia, se escribe u
 | [0004](0004-thx-por-com.md) | Los ajustes de THX se cambian por la interfaz COM de su servicio | Aceptada (ampliada por 0005) |
 | [0005](0005-thx-por-zeromq.md) | Lo que COM no puede cambiar en THX va por ZeroMQ, con un cliente propio | Aceptada |
 | [0006](0006-eq-como-synapse.md) | El preset del headset elige también el preset y la curva de THX | Aceptada |
+| [0007](0007-microfono-en-el-perfil.md) | Las mejoras del micrófono se guardan en el perfil y rzr se las vuelve a mandar a THX | Aceptada |
 
 ## Plantilla
 

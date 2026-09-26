@@ -13,6 +13,7 @@ use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
 use crate::config::{Config, EqMethod, EqMode, Profile};
+use crate::mic::{self, MicEffect, MicEqPreset, MicSettings};
 use crate::protocol::{self, EqPreset, EQ_BANDS};
 use crate::thx::{self, ThxChange, ThxEq, ThxLevel, ThxOption};
 use crate::winaudio::{self, AudioDevice, Endpoint};
@@ -115,6 +116,24 @@ pub enum Msg {
     ThxVoiceClarityLevel {
         value: f32,
     },
+    /// Microphone enhancements (MICRÓFONO), stored in the profile.
+    MicEqPreset {
+        preset: MicEqPreset,
+    },
+    /// Custom microphone curve after a drag on its graph ends.
+    MicEqBands {
+        bands: Vec<i8>,
+    },
+    MicEqReset,
+    MicEffect {
+        effect: MicEffect,
+        on: bool,
+    },
+    /// Sent when the slider is released.
+    MicEffectLevel {
+        effect: MicEffect,
+        value: i16,
+    },
     Autostart {
         on: bool,
     },
@@ -174,6 +193,8 @@ impl App {
         let (dev_tx, dev_rx) = worker::spawn_device_worker(Target::from_config(&cfg), demo, notify.clone());
         let (audio_tx, audio_rx) = worker::spawn_audio_worker(demo, notify.clone());
         let (thx_tx, thx_rx) = worker::spawn_thx_worker(demo, notify);
+        // THX may have lost them (a restart); its thread sends them once it can.
+        let _ = thx_tx.send(ThxCmd::Mic(cfg.profile().mic));
         Self {
             cfg,
             demo,
@@ -217,6 +238,34 @@ impl App {
         if matches!(change, Change::All | Change::Eq) {
             self.sync_thx_eq();
         }
+        if change == Change::All {
+            self.sync_thx_mic();
+        }
+    }
+
+    /// The microphone enhancements go to THX, which forgets them when its
+    /// service restarts; its thread sends them again then (ADR 0007).
+    fn sync_thx_mic(&mut self) {
+        let _ = self.thx_tx.send(ThxCmd::Mic(self.profile().mic));
+    }
+
+    /// A microphone change: save it and send it to THX (and the EQ preset's
+    /// index to the headset, like Synapse).
+    fn set_mic(&mut self, f: impl FnOnce(&mut mic::MicSettings)) {
+        let before = self.profile().mic;
+        let m = &mut self.profile_mut().mic;
+        f(m);
+        m.sanitize();
+        let after = *m;
+        if after == before {
+            return;
+        }
+        if after.eq_preset != before.eq_preset {
+            self.push(Change::MicEq);
+        } else {
+            self.store();
+        }
+        self.sync_thx_mic();
     }
 
     /// Like Synapse, the headset preset also picks THX's preset and curve,
@@ -460,6 +509,19 @@ impl App {
             Msg::ThxBassBoostLevel { value } => self.set_thx_level(ThxLevel::BassBoost, value),
             Msg::ThxNormalizationLevel { value } => self.set_thx_level(ThxLevel::Normalization, value),
             Msg::ThxVoiceClarityLevel { value } => self.set_thx_level(ThxLevel::VoiceClarity, value),
+            Msg::MicEqPreset { preset } => self.set_mic(|m| m.eq_preset = preset),
+            Msg::MicEqBands { bands } => {
+                if let Ok(bands) = <[i8; EQ_BANDS]>::try_from(bands) {
+                    self.set_mic(|m| {
+                        if m.eq_preset == MicEqPreset::Custom {
+                            m.custom_eq = bands;
+                        }
+                    });
+                }
+            }
+            Msg::MicEqReset => self.set_mic(|m| m.custom_eq = [0; EQ_BANDS]),
+            Msg::MicEffect { effect, on } => self.set_mic(|m| m.effect_mut(effect).on = on),
+            Msg::MicEffectLevel { effect, value } => self.set_mic(|m| m.effect_mut(effect).level = value),
             Msg::Autostart { on } => match registry::set_autostart(on) {
                 Ok(()) => self.autostart = on,
                 Err(e) => self.toast(e, true),
@@ -691,6 +753,21 @@ impl App {
                 "voice_clarity": s.dialog_enhancement_enabled,
                 "voice_clarity_level": s.dialog_enhancement.round(),
             })),
+            "mic": {
+                "eq_preset": p.mic.eq_preset,
+                "presets": MicEqPreset::ALL.iter().map(|&x| json!({ "id": x, "label": x.label() })).collect::<Vec<_>>(),
+                "editable": p.mic.eq_preset == MicEqPreset::Custom,
+                "curve": p.mic.curve(),
+                "min": mic::MIC_EQ_MIN_DB,
+                "max": mic::MIC_EQ_MAX_DB,
+                "effects": MicSettings::EFFECTS.iter().map(|&e| {
+                    let fx = p.mic.effect(e);
+                    let (min, max) = e.range();
+                    (e.id().to_string(), json!({ "on": fx.on, "level": fx.level, "min": min, "max": max }))
+                }).collect::<serde_json::Map<_, _>>(),
+                // The enhancements need THX's microphone effect and its service.
+                "available": self.thx.service,
+            },
             "connlog": { "lines": self.conn_log, "drops_today": self.conn_drops_today },
             "wizard": self.wizard.as_ref().map(|w| w.view(st.headset_connected, self.info.busy)),
         })
@@ -756,6 +833,18 @@ mod tests {
         assert!(matches!(
             parse(r#"{"cmd":"thx_voice_clarity_level","value":100,"commit":true}"#),
             Msg::ThxVoiceClarityLevel { value } if value == 100.0
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"mic_eq_preset","preset":"mic_boost"}"#),
+            Msg::MicEqPreset { preset: MicEqPreset::MicBoost }
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"mic_effect","effect":"voice_gate","on":true}"#),
+            Msg::MicEffect { effect: MicEffect::VoiceGate, on: true }
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"mic_effect_level","effect":"noise_reduction","value":80,"commit":true}"#),
+            Msg::MicEffectLevel { effect: MicEffect::NoiseReduction, value: 80 }
         ));
         assert!(serde_json::from_str::<Msg>(r#"{"cmd":"format_disk"}"#).is_err());
     }

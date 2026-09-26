@@ -14,6 +14,7 @@ Cambios que nota quien usa rzr. Formato basado en [Keep a Changelog](https://kee
 - Prueba guiada del ecualizador y registro de depuración (`debug.log`) en AJUSTES › DIAGNÓSTICO.
 - MEJORAS muestra el estado de THX (Bass Boost, Normalización, Claridad de voz, Spatial, sus niveles y el preset de THX) y permite cambiarlo todo sin tener Synapse abierto: activar o desactivar Bass Boost, Normalización, Claridad de voz y THX Spatial Audio, y el nivel de Bass Boost, Normalización y Claridad de voz.
 - El ecualizador se oye: con THX instalado, cada preset (Juego, Película, Música, Personalizado y los Esports) aplica también su curva en THX, como Synapse. La curva se mantiene al activar o desactivar THX Spatial Audio.
+- MICRÓFONO: mejoras del micrófono sin Synapse (THX): ecualizador con presets (Predeterminado, Refuerzo, Transmisión, Conferencia) y curva personalizada de −12 a +12 dB, normalización de volumen, claridad vocal, reducción de ruido y puerta de voz, cada una con su nivel. Se guardan en el perfil y rzr las vuelve a aplicar al iniciar.
 - Script de captura (`tools/capturar-synapse.ps1`) con fases para Synapse, las mejoras de Windows, THX y el servicio de THX (`-Fase thx-servicio`, solo lectura).
 - Documentación del proyecto: estado, arquitectura, hallazgos, reglas y decisiones.
 

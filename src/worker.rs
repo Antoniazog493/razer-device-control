@@ -11,6 +11,7 @@ use crate::config::{Config, EqMethod, Profile};
 use crate::connlog::ConnLog;
 use crate::device::{self, Device, Options, Status};
 use crate::dlog;
+use crate::mic::MicSettings;
 use crate::protocol::{self, EqPreset, EQ_BANDS};
 use crate::thx::{self, ThxChange, ThxEq, ThxOption, ThxState};
 use crate::winaudio::{self, AudioDevice, Endpoint, Flow};
@@ -34,6 +35,7 @@ pub enum Change {
     Sidetone,
     Dnd,
     AutoOff,
+    MicEq,
 }
 
 /// Settings the device worker needs besides the profile.
@@ -386,6 +388,7 @@ impl DevWorker {
                 Change::Sidetone => dev.set_sidetone(p.sidetone_wire())?,
                 Change::Dnd => dev.set_dnd(p.dnd)?,
                 Change::AutoOff => dev.set_auto_off(p.auto_off_wire())?,
+                Change::MicEq => dev.set_mic_eq_preset(p.mic.eq_preset.selector())?,
             }
         }
         Ok(())
@@ -606,13 +609,17 @@ pub enum ThxCmd {
     Change(ThxChange),
     /// The THX preset and curve for the profile's headset preset (ADR 0006).
     Eq(ThxEq),
+    /// The profile's microphone enhancements (ADR 0007).
+    Mic(MicSettings),
 }
 
 impl ThxCmd {
+    /// Output settings live in the THX state; the microphone's don't.
     fn apply(self, s: &mut ThxState) {
         match self {
             ThxCmd::Change(c) => c.apply(s),
             ThxCmd::Eq(eq) => eq.apply(s),
+            ThxCmd::Mic(_) => {}
         }
     }
 
@@ -620,6 +627,7 @@ impl ThxCmd {
         match self {
             ThxCmd::Change(c) => c.shown_in(s),
             ThxCmd::Eq(eq) => eq.shown_in(s),
+            ThxCmd::Mic(_) => false,
         }
     }
 
@@ -627,19 +635,22 @@ impl ThxCmd {
         match self {
             ThxCmd::Change(c) => c.label(),
             ThxCmd::Eq(_) => "Ecualizador de THX".into(),
+            ThxCmd::Mic(_) => "Mejoras del micrófono".into(),
         }
+    }
+
+    /// Commands where only the latest one matters.
+    fn replaces(self, other: ThxCmd) -> bool {
+        matches!((self, other), (ThxCmd::Eq(_), ThxCmd::Eq(_)) | (ThxCmd::Mic(_), ThxCmd::Mic(_)))
     }
 }
 
 /// The commands to run from a batch that arrived together: only the last EQ
-/// counts (dragging the curve sends one per release), the rest in order.
+/// and the last microphone settings count (dragging a curve or a slider sends
+/// one per release), the rest in order.
 fn thx_batch(cmds: Vec<ThxCmd>) -> Vec<ThxCmd> {
-    let last_eq = cmds.iter().rposition(|c| matches!(c, ThxCmd::Eq(_)));
-    cmds.into_iter()
-        .enumerate()
-        .filter(|&(i, c)| !matches!(c, ThxCmd::Eq(_)) || Some(i) == last_eq)
-        .map(|(_, c)| c)
-        .collect()
+    let later = |i: usize, c: ThxCmd| cmds[i + 1..].iter().any(|&n| n.replaces(c));
+    cmds.iter().enumerate().filter(|&(i, &c)| !later(i, c)).map(|(_, &c)| c).collect()
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -668,6 +679,7 @@ pub fn spawn_thx_worker(demo: bool, notify: Notify) -> (Sender<ThxCmd>, Receiver
             status: ThxStatus::default(),
             service: None,
             eq: None,
+            mic: None,
             last_problem: String::new(),
         };
         if demo {
@@ -702,6 +714,9 @@ struct ThxWorker {
     /// The last THX EQ asked for, put back after a Spatial switch: THX keeps
     /// another curve per preset with Spatial on.
     eq: Option<ThxEq>,
+    /// The profile's microphone settings. THX forgets them when its service
+    /// restarts, so they're sent again whenever rzr (re)connects to it.
+    mic: Option<MicSettings>,
     /// Last problem logged, so a lasting one is logged once and not every poll.
     last_problem: String,
 }
@@ -744,9 +759,16 @@ impl ThxWorker {
 
     fn poll(&mut self) {
         let state = self.read();
+        if self.service.as_ref().is_some_and(|s| !s.alive()) {
+            self.problem("se perdió la conexión con el servicio de THX".into());
+            self.service = None;
+        }
         if state.is_some() && self.service.is_none() {
             match thx::Service::connect() {
-                Ok(s) => self.service = Some(s),
+                Ok(s) => {
+                    self.service = Some(s);
+                    self.apply_mic(false);
+                }
                 Err(e) => self.problem(e),
             }
         }
@@ -754,10 +776,36 @@ impl ThxWorker {
         self.update(ThxStatus { state, service, busy: self.status.busy });
     }
 
+    /// Send the microphone settings. `asked`: the user just changed them, so
+    /// a failure is shown; otherwise it's only logged.
+    fn apply_mic(&mut self, asked: bool) {
+        let (Some(service), Some(mic)) = (&self.service, self.mic) else { return };
+        if self.demo {
+            return;
+        }
+        dlog!("THX: micrófono {mic:?}");
+        match service.set_mic(&mic) {
+            Ok(()) => dlog!("THX: micrófono confirmado"),
+            Err(e) if asked => {
+                dlog!("THX: {e}");
+                self.message(format!("Mejoras del micrófono: {e}"), true);
+            }
+            Err(e) => self.problem(e),
+        }
+    }
+
     /// Make a change, then wait until the service's stored state shows it.
     fn run(&mut self, cmd: ThxCmd) {
-        if let ThxCmd::Eq(eq) = cmd {
-            self.eq = Some(eq);
+        match cmd {
+            ThxCmd::Eq(eq) => self.eq = Some(eq),
+            ThxCmd::Mic(mic) => {
+                self.mic = Some(mic);
+                self.update(ThxStatus { busy: true, ..self.status.clone() });
+                self.apply_mic(true);
+                self.update(ThxStatus { busy: false, ..self.status.clone() });
+                return;
+            }
+            ThxCmd::Change(_) => {}
         }
         let Some(before) = self.status.state.clone() else { return };
         if cmd.shown_in(&before) {
@@ -780,6 +828,7 @@ impl ThxWorker {
         let result = match (&self.service, cmd) {
             (Some(service), ThxCmd::Change(change)) => service.apply(change),
             (Some(service), ThxCmd::Eq(eq)) => service.set_eq(&eq),
+            (Some(_), ThxCmd::Mic(_)) => Ok(()),
             (None, _) => Err("el servicio de THX no responde".to_string()),
         };
         let error = match result {
@@ -875,5 +924,11 @@ mod tests {
         assert_eq!(thx_batch(vec![eq(1), spatial, eq(2), bass, eq(3)]), vec![spatial, bass, eq(3)]);
         assert_eq!(thx_batch(vec![spatial, bass]), vec![spatial, bass]);
         assert_eq!(thx_batch(vec![eq(1)]), vec![eq(1)]);
+        let mic = |on| {
+            let mut m = MicSettings::default();
+            m.normalization.on = on;
+            ThxCmd::Mic(m)
+        };
+        assert_eq!(thx_batch(vec![mic(true), eq(1), mic(false), eq(2)]), vec![mic(false), eq(2)]);
     }
 }

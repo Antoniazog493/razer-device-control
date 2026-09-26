@@ -11,6 +11,7 @@
     data-toggle="a.b"    on/off switch; data-send="cmd" sends {cmd, on}
     data-slider="a.b"    slider; see makeSlider() for its attributes
     data-send="cmd"      on a button: sends {cmd}
+    data-args='{...}'    extra arguments for a switch's or slider's command
     data-open="what"     opens something outside the app (mixer, sound, ...)
 -->
 <html lang="es">
@@ -209,19 +210,40 @@
         <div class="slider" data-slider="profile.sidetone_volume" data-send="sidetone_volume" data-enabled="profile.sidetone_enabled" data-min="1" data-max="100" data-labels="0,100"></div>
       </section>
 
-      <section class="card unavailable">
-        <header><h2>MEJORAS DE MICRÓFONO (SOFTWARE)</h2></header>
-        <ul class="features">
-          <li><span class="toggle" aria-disabled="true"></span>ECUALIZADOR DE MICRÓFONO</li>
-          <li><span class="toggle" aria-disabled="true"></span>NORMALIZACIÓN DE VOLUMEN</li>
-          <li><span class="toggle" aria-disabled="true"></span>CLARIDAD VOCAL</li>
-          <li><span class="toggle" aria-disabled="true"></span>REDUCCIÓN DE RUIDO AMBIENTAL</li>
-          <li><span class="toggle" aria-disabled="true"></span>SENSIBILIDAD (PUERTA DE VOZ)</li>
+      <section class="card">
+        <header>
+          <h2>MEJORAS DE MICRÓFONO (THX)</h2>
+          <span class="help" data-tip="Las hace el efecto de micrófono de THX, en Windows, no el headset. Se guardan en el perfil y rzr las vuelve a enviar a THX cuando hace falta (THX las olvida al reiniciar la PC).">?</span>
+        </header>
+        <ul class="features live">
+          <li><button class="toggle" data-toggle="mic.effects.normalization.on" data-send="mic_effect" data-args='{"effect":"normalization"}'></button>NORMALIZACIÓN DE VOLUMEN</li>
+          <li class="level-row"><div class="slider" data-slider="mic.effects.normalization.level" data-send="mic_effect_level" data-args='{"effect":"normalization"}' data-enabled="mic.effects.normalization.on" data-min="0" data-max="100" data-labels="0,100"></div></li>
+          <li><button class="toggle" data-toggle="mic.effects.voice_clarity.on" data-send="mic_effect" data-args='{"effect":"voice_clarity"}'></button>CLARIDAD VOCAL</li>
+          <li class="level-row"><div class="slider" data-slider="mic.effects.voice_clarity.level" data-send="mic_effect_level" data-args='{"effect":"voice_clarity"}' data-enabled="mic.effects.voice_clarity.on" data-min="0" data-max="100" data-labels="0,100"></div></li>
+          <li><button class="toggle" data-toggle="mic.effects.noise_reduction.on" data-send="mic_effect" data-args='{"effect":"noise_reduction"}'></button>REDUCCIÓN DE RUIDO AMBIENTAL</li>
+          <li class="level-row"><div class="slider" data-slider="mic.effects.noise_reduction.level" data-send="mic_effect_level" data-args='{"effect":"noise_reduction"}' data-enabled="mic.effects.noise_reduction.on" data-min="0" data-max="100" data-labels="0,100"></div></li>
+          <li><button class="toggle" data-toggle="mic.effects.voice_gate.on" data-send="mic_effect" data-args='{"effect":"voice_gate"}'></button>SENSIBILIDAD (PUERTA DE VOZ)</li>
+          <li class="level-row"><div class="slider" data-slider="mic.effects.voice_gate.level" data-send="mic_effect_level" data-args='{"effect":"voice_gate"}' data-enabled="mic.effects.voice_gate.on" data-min="-40" data-max="-20" data-unit=" dB" data-labels="−40 DB,−20 DB"></div></li>
         </ul>
-        <p class="dim">Synapse procesa estas funciones en el PC; no envía ningún comando al headset para ellas, por eso no están disponibles sin Synapse.</p>
+        <p class="faint">Afectan a lo que graban o transmiten las apps, no al monitoreo de micrófono. La puerta de voz corta lo que suene por debajo del umbral.</p>
+        <p class="faint" data-show="!mic.available">THX no está disponible ahora: los ajustes se guardan en el perfil y se aplicarán cuando lo esté.</p>
       </section>
     </div>
   </div>
+
+  <section class="card">
+    <header>
+      <h2>ECUALIZADOR DE MICRÓFONO</h2>
+      <span class="help" data-tip="Lo aplica THX a tu voz, como en Synapse. PERSONALIZADO usa tu propia curva de 10 bandas (−12 a +12 dB). Se guarda en el perfil.">?</span>
+    </header>
+    <div class="preset-row">
+      <div class="presets" id="mic-presets"></div>
+      <button class="link" data-send="mic_eq_reset" data-show="mic.editable" title="Deja la curva personalizada del micrófono plana">⟲ Restablecer</button>
+    </div>
+    <div class="eq mic-eq" id="mic-eq"></div>
+    <p class="faint" data-show="mic.editable">Arrastra los puntos para ajustar cada banda. Se aplica al soltar.</p>
+    <p class="faint" data-show="!mic.editable">Curva del preajuste (no editable). Elige PERSONALIZADO para definir la tuya.</p>
+  </section>
 </section>
 
 <!-- =========================================================== ENERGÍA -->

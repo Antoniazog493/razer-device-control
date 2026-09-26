@@ -8,6 +8,7 @@ mod debuglog;
 mod device;
 mod gui;
 mod instance;
+mod mic;
 mod protocol;
 mod registry;
 mod synapse;
@@ -20,6 +21,7 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use config::Config;
+use mic::MicSettings;
 use worker::Target;
 
 #[cfg(windows)]
@@ -161,6 +163,8 @@ fn run_watch(silent: bool) {
     // Consecutive failed link checks; one dropped reply isn't a disconnect.
     let mut misses = 0;
     let mut next_check = Instant::now();
+    let mut mic = MicSync::default();
+    winaudio::com_init();
 
     if !silent {
         println!("rzr: watching for headset (Ctrl+C to stop)");
@@ -222,6 +226,7 @@ fn run_watch(silent: bool) {
         let cfg = Config::load();
         debuglog::set_enabled(cfg.debug_log);
         d.set_options(device::Options::from_config(&cfg));
+        mic.sync(&cfg.profile().mic);
 
         let connected = match d.link_status() {
             Ok(c) => c,
@@ -274,6 +279,47 @@ fn run_watch(silent: bool) {
         }
 
         was_connected = connected;
+    }
+}
+
+/// Keeps THX's microphone enhancements as the profile has them: THX forgets
+/// them when its service restarts (e.g. after a reboot), and Synapse isn't
+/// there to send them again (ADR 0007). They're sent when the profile changes
+/// and whenever the connection to the service is (re)made, not on every
+/// check, so an open Synapse isn't fought over them.
+#[derive(Default)]
+struct MicSync {
+    service: Option<thx::Service>,
+    sent: Option<MicSettings>,
+}
+
+impl MicSync {
+    fn sync(&mut self, want: &MicSettings) {
+        if self.service.as_ref().is_some_and(|s| !s.alive()) {
+            dlog!("segundo plano: se perdió la conexión con el servicio de THX");
+            self.service = None;
+        }
+        if self.service.is_none() {
+            // Not there yet (the service starts with Windows, maybe after us).
+            let Ok(s) = thx::Service::connect() else { return };
+            self.service = Some(s);
+            self.sent = None;
+        }
+        if self.sent.as_ref() == Some(want) {
+            return;
+        }
+        let Some(service) = &self.service else { return };
+        match service.set_mic(want) {
+            Ok(()) => {
+                dlog!("segundo plano: mejoras del micrófono enviadas a THX");
+                self.sent = Some(*want);
+            }
+            Err(e) => {
+                dlog!("segundo plano: mejoras del micrófono: {e}");
+                // Reconnect and try again on the next check.
+                self.service = None;
+            }
+        }
     }
 }
 

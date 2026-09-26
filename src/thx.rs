@@ -20,6 +20,7 @@ mod zmtp;
 
 use serde::Deserialize;
 
+use crate::mic::{MicEffect, MicSettings};
 use crate::protocol::{EqPreset, EQ_BANDS};
 
 /// Registry key (under HKLM) with the properties of an output endpoint, from
@@ -323,7 +324,8 @@ pub use imp::*;
 
 #[cfg(windows)]
 mod imp {
-    use super::{parse_state, properties_key, zmq, ThxChange, ThxEq, ThxOption, ThxState};
+    use super::{parse_state, properties_key, zmq, MicEffect, MicSettings, ThxChange, ThxEq, ThxOption, ThxState};
+    use crate::protocol::EQ_BANDS;
     use std::net::SocketAddr;
     use windows::core::{interface, s, IUnknown, IUnknown_Vtbl, GUID, HRESULT, PCSTR};
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_LOCAL_SERVER};
@@ -363,12 +365,79 @@ mod imp {
         fn set_dialog_enhance_state(&self, o: PCSTR, enabled: i32, sz: *mut u64, msg: *mut u8) -> HRESULT;
     }
 
+    /// `VSSrv.VSSrvSettings`: the service's other settings, among them the
+    /// microphone's (ADR 0007).
+    const CLSID_SETTINGS: GUID = GUID::from_u128(0x087e4db6_0519_4a63_9099_9201915e1371);
+
+    /// The service's general settings interface, in vtable order as in its
+    /// type library. rzr uses only the microphone methods at the end.
+    #[interface("392375ff-8204-4a26-b4c5-af4b71aca729")]
+    unsafe trait IVSSrvSettings: IUnknown {
+        fn init(&self, proc_id: u32) -> HRESULT;
+        fn get_processing_state(&self, enabled: *mut i32) -> HRESULT;
+        fn set_processing_state(&self, enabled: i32) -> HRESULT;
+        fn get_hrtf_state(&self, use_custom: *mut i32) -> HRESULT;
+        fn set_hrtf_state(&self, use_custom: i32) -> HRESULT;
+        fn is_custom_hrtf_present(&self, present: *mut i32) -> HRESULT;
+        fn reload_hrtf(&self) -> HRESULT;
+        fn get_output_device_params(&self, v: u32, params: *mut u32, data: *mut f32, n: u32) -> HRESULT;
+        fn get_default_output_device_params(&self, v: u32, params: *mut u32, data: *mut f32, n: u32) -> HRESULT;
+        fn set_output_device_params(&self, v: u32, params: *const u32, data: *const f32, n: u32) -> HRESULT;
+        fn get_output_device(&self, id: *mut u16) -> HRESULT;
+        fn set_output_device(&self, id: *const u16, kind: u32) -> HRESULT;
+        fn get_input_device(&self, id: *mut u16) -> HRESULT;
+        fn set_input_device(&self, id: *const u16) -> HRESULT;
+        fn get_input_sidetone_state(&self, enabled: *mut i32) -> HRESULT;
+        fn set_input_sidetone_state(&self, enabled: i32) -> HRESULT;
+        fn get_input_sidetone_level(&self, level: *mut f32) -> HRESULT;
+        fn set_input_sidetone_level(&self, level: f32) -> HRESULT;
+        fn get_mic_preview_state(&self, enabled: *mut i32) -> HRESULT;
+        fn set_mic_preview_state(&self, enabled: i32) -> HRESULT;
+        /// `float[10]` in the type library.
+        fn get_mic_eq_gains(&self, gains: *mut f32) -> HRESULT;
+        fn set_mic_eq_gains(&self, gains: *const f32) -> HRESULT;
+        fn get_mic_params(&self, param: u32, value: *mut f32) -> HRESULT;
+        fn set_mic_params(&self, param: u32, value: f32) -> HRESULT;
+    }
+
     /// The THX state stored for an output endpoint, if THX is installed on it.
     pub fn read_state(endpoint_id: &str) -> Option<Result<ThxState, String>> {
         let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
         let key = hklm.open_subkey_with_flags(properties_key(endpoint_id)?, KEY_READ).ok()?;
         let json: String = key.get_value(STATE_VALUE).ok()?;
         Some(parse_state(&json))
+    }
+
+    /// `GetMicParams` answers 0-17 (pairs of switch and level).
+    const MIC_PARAMS: usize = 18;
+
+    /// The microphone enhancements in the service's terms.
+    struct MicState {
+        eq: [f32; EQ_BANDS],
+        params: [f32; MIC_PARAMS],
+    }
+
+    impl MicState {
+        /// Only the parameters rzr sets are filled in.
+        fn from(mic: &MicSettings) -> Self {
+            let mut params = [0f32; MIC_PARAMS];
+            for effect in MicSettings::EFFECTS {
+                let (on, level) = effect.params();
+                let fx = mic.effect(effect);
+                params[on as usize] = f32::from(u8::from(fx.on));
+                params[level as usize] = f32::from(fx.level);
+            }
+            Self { eq: mic.curve().map(f32::from), params }
+        }
+
+        /// This state has everything rzr set in `want`.
+        fn shows(&self, want: &MicState) -> bool {
+            self.eq == want.eq
+                && MicSettings::EFFECTS.iter().all(|e| {
+                    let (on, level) = e.params();
+                    [on, level].iter().all(|&p| self.params[p as usize] == want.params[p as usize])
+                })
+        }
     }
 
     /// Where the service takes ZeroMQ requests, from its discovery key.
@@ -380,9 +449,10 @@ mod imp {
         url.as_deref().and_then(zmq::parse_address).unwrap_or(zmq::DEFAULT_ADDRESS)
     }
 
-    /// The THX service: its COM interface, and where it takes ZeroMQ requests.
+    /// The THX service: its COM interfaces, and where it takes ZeroMQ requests.
     pub struct Service {
         com: IVSSrvTHXSettings,
+        settings: IVSSrvSettings,
         zmq: SocketAddr,
     }
 
@@ -391,11 +461,13 @@ mod imp {
         pub fn connect() -> Result<Self, String> {
             let com: IVSSrvTHXSettings = unsafe { CoCreateInstance(&CLSID_THX_SETTINGS, None, CLSCTX_LOCAL_SERVER) }
                 .map_err(|e| format!("no se pudo conectar con el servicio de THX: {e}"))?;
+            let settings: IVSSrvSettings = unsafe { CoCreateInstance(&CLSID_SETTINGS, None, CLSCTX_LOCAL_SERVER) }
+                .map_err(|e| format!("no se pudo conectar con el servicio de THX: {e}"))?;
             // The service keeps settings per user session and finds ours by process ID.
-            unsafe { com.init(std::process::id()) }
-                .ok()
-                .map_err(|e| format!("el servicio de THX rechazó la conexión: {e}"))?;
-            Ok(Self { com, zmq: zmq_address() })
+            let refused = |e| format!("el servicio de THX rechazó la conexión: {e}");
+            unsafe { com.init(std::process::id()) }.ok().map_err(refused)?;
+            unsafe { settings.init(std::process::id()) }.ok().map_err(refused)?;
+            Ok(Self { com, settings, zmq: zmq_address() })
         }
 
         /// Make a change and check the service took it: the switches COM
@@ -423,16 +495,72 @@ mod imp {
             unsafe { self.com.set_current_mode_eq_gains(ORIGINATOR, gains.as_ptr(), &mut sz, msg.as_mut_ptr()) }
                 .ok()
                 .map_err(|e| format!("el servicio de THX no aplicó la curva: {e}"))?;
-            // The type library doesn't give the buffer's size; 256 is what the
-            // checks on the user's PC used.
-            let mut back = [0f32; 256];
+            // `float[31]` in the type library.
+            let mut back = [0f32; 31];
             unsafe { self.com.get_current_mode_eq_gains(back.as_mut_ptr()) }
                 .ok()
                 .map_err(|e| format!("no se pudo leer la curva de THX: {e}"))?;
-            if back[..gains.len()] == gains {
+            if back == gains {
                 Ok(())
             } else {
                 Err("el servicio de THX no guardó la curva".into())
+            }
+        }
+
+        /// The service still answers (a restart breaks the connection, and
+        /// the service forgets the microphone settings then).
+        pub fn alive(&self) -> bool {
+            let mut v = 0i32;
+            unsafe { self.settings.get_mic_preview_state(&mut v) }.is_ok()
+        }
+
+        /// The microphone enhancements as the service has them.
+        fn mic(&self) -> Result<MicState, String> {
+            let s = &self.settings;
+            let read = |e| format!("no se pudo leer el micrófono en THX: {e}");
+            let mut eq = [0f32; EQ_BANDS];
+            unsafe { s.get_mic_eq_gains(eq.as_mut_ptr()) }.ok().map_err(read)?;
+            let mut params = [0f32; MIC_PARAMS];
+            for (p, v) in params.iter_mut().enumerate() {
+                unsafe { s.get_mic_params(p as u32, v) }.ok().map_err(read)?;
+            }
+            Ok(MicState { eq, params })
+        }
+
+        /// Send the microphone enhancements that differ, as Synapse does, and
+        /// check the service has them all.
+        pub fn set_mic(&self, mic: &MicSettings) -> Result<(), String> {
+            let s = &self.settings;
+            let want = MicState::from(mic);
+            let now = self.mic()?;
+            let fail = |e| format!("el servicio de THX no aplicó el cambio: {e}");
+            let set = |p: u32, v: f32| unsafe { s.set_mic_params(p, v) }.ok().map_err(fail);
+            if now.eq != want.eq {
+                unsafe { s.set_mic_eq_gains(want.eq.as_ptr()) }.ok().map_err(fail)?;
+            }
+            for effect in MicSettings::EFFECTS {
+                let (on, level) = effect.params();
+                let (was_on, want_on) = (now.params[on as usize], want.params[on as usize]);
+                let want_level = want.params[level as usize];
+                if now.params[level as usize] != want_level {
+                    // Synapse switches Voice Clarity off around a level change.
+                    let toggle = effect == MicEffect::VoiceClarity && was_on != 0.0;
+                    if toggle {
+                        set(on, 0.0)?;
+                    }
+                    set(level, want_level)?;
+                    if toggle {
+                        set(on, 1.0)?;
+                    }
+                }
+                if was_on != want_on {
+                    set(on, want_on)?;
+                }
+            }
+            if self.mic()?.shows(&want) {
+                Ok(())
+            } else {
+                Err("el servicio de THX no guardó las mejoras del micrófono".into())
             }
         }
 
@@ -469,7 +597,7 @@ mod imp {
 /// Non-Windows builds (development only): no THX.
 #[cfg(not(windows))]
 mod imp {
-    use super::{ThxChange, ThxEq, ThxState};
+    use super::{MicSettings, ThxChange, ThxEq, ThxState};
 
     pub fn read_state(_endpoint_id: &str) -> Option<Result<ThxState, String>> {
         None
@@ -486,6 +614,12 @@ mod imp {
         }
         pub fn set_eq(&self, _eq: &ThxEq) -> Result<(), String> {
             Err("THX solo existe en Windows".into())
+        }
+        pub fn set_mic(&self, _mic: &MicSettings) -> Result<(), String> {
+            Err("THX solo existe en Windows".into())
+        }
+        pub fn alive(&self) -> bool {
+            false
         }
     }
 }

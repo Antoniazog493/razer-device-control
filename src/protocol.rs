@@ -59,6 +59,7 @@ pub const CMD_MIC_MUTE: u8 = 0x55;
 pub const CMD_DONGLE_FIRMWARE: u8 = 0x01; // type 0x06, "Get Dongle Firmware Version"
 pub const CMD_PRESET: u8 = 0x93; // "Set Preset EQ Index" (see EqPreset)
 pub const CMD_EQ: u8 = 0x95; // "Set Customer EQ Band": 10 signed dB values, type 0x0D
+pub const CMD_MIC_EQ_PRESET: u8 = 0x96; // "Set Mic Preset EQ Index" (see mic::MicEqPreset)
 pub const CMD_SIDETONE: u8 = 0x98; // "Set Sidetone status"
 pub const CMD_SIDETONE_LEVEL: u8 = 0x99; // "Set Sidetone Volume"
 pub const CMD_MODE_FLAG: u8 = 0x9D; // "Set Speaker Preset EQ Group": 1 classic, 2 esports
@@ -315,6 +316,14 @@ mod tests {
         assert_eq!(set_eq_bands(&bands), legacy(0x12, 0x08, 0x0D, 0x95, &params));
 
         assert_eq!(query(CMD_BATTERY), legacy(0x08, 0x08, 0x03, 0x21, &[]));
+    }
+
+    #[test]
+    fn mic_eq_preset_matches_synapse() {
+        // Synapse's "Set Mic Preset EQ Index" for Conference (3) and Custom (255),
+        // from its log of this headset (2026-09-26): same shape as 0x98.
+        assert_eq!(set_value(CMD_MIC_EQ_PRESET, 3), legacy(0x09, 0x08, 0x04, 0x96, &[0x00, 0x01, 0x03]));
+        assert_eq!(set_value(CMD_MIC_EQ_PRESET, 255), legacy(0x09, 0x08, 0x04, 0x96, &[0x00, 0x01, 0xFF]));
     }
 
     /// Pad a captured report to 64 bytes.

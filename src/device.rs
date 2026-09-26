@@ -550,6 +550,12 @@ impl Device {
         Ok(())
     }
 
+    /// Microphone EQ preset index (0x96), as Synapse sends it; the curve
+    /// itself goes to THX.
+    pub fn set_mic_eq_preset(&self, selector: u8) -> Result<(), String> {
+        self.write_value(proto::CMD_MIC_EQ_PRESET, selector)
+    }
+
     pub fn set_dnd(&self, on: bool) -> Result<(), String> {
         self.write_value(proto::CMD_DND, on as u8)
     }
@@ -579,6 +585,7 @@ impl Device {
         self.set_sidetone(profile.sidetone_wire())?;
         self.set_dnd(profile.dnd)?;
         self.set_auto_off(profile.auto_off_wire())?;
+        self.set_mic_eq_preset(profile.mic.eq_preset.selector())?;
         Ok(())
     }
 }

@@ -107,6 +107,7 @@ Las respuestas repiten el sub-frame desplazado: `[12]` = id del comando, `[13]` 
 | Familia del preset | `04/9D` | — | 1 = clásico, 2 = esports |
 | Estado del EQ de presets | `04/9E` | `03/1E` | Synapse envía 0 al iniciar; sin efecto audible según OpenRazer |
 | Curva EQ (Personalizado y cada Esports) | `0D/95` | `03/15` | 10 bytes con signo (dB), se guarda en el preset activo |
+| Preset de EQ del micrófono | `04/96` | — | 0 Predeterminado, 1 Refuerzo, 2 Transmisión, 3 Conferencia, 255 Personalizado (la curva la aplica THX) |
 | Sidetone on/off | `04/98` | `03/18` | 0/1 |
 | Nivel de sidetone | `04/99` | `03/19` | Synapse 0–100 → 0–14 (50 → 7) |
 | No molestar | `04/A7` | `03/27` | 0/1 |

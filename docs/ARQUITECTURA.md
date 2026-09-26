@@ -9,7 +9,7 @@ Cómo está construido rzr. Si cambias la estructura (un módulo nuevo, otro hil
 | Modo | Cómo se inicia | Qué hace |
 |---|---|---|
 | **Panel** | doble clic, `rzr`, `rzr --demo` | Abre la ventana. Mientras está abierta, aplica el perfil cuando el headset se conecta (si no lo hace ya el proceso en segundo plano). |
-| **Segundo plano** | `rzr --silent --watch` (lo que usa "Iniciar con Windows") | Sin ventana. Vigila el dongle y aplica el perfil en cada conexión. Solo puede haber uno. |
+| **Segundo plano** | `rzr --silent --watch` (lo que usa "Iniciar con Windows") | Sin ventana. Vigila el dongle y aplica el perfil en cada conexión. Manda a THX las mejoras del micrófono del perfil, que THX olvida al reiniciar ([ADR 0007](adr/0007-microfono-en-el-perfil.md)). Solo puede haber uno. |
 | **Línea de comandos** | `rzr apply`, `rzr import ARCHIVO`, `rzr help` | Hace una cosa y termina. |
 
 El panel y el proceso en segundo plano pueden correr a la vez: comparten el dongle mediante un candado (ver [Concurrencia](#hilos-y-concurrencia)).
@@ -51,9 +51,10 @@ Cada capa solo conoce a la de abajo. `protocol.rs` no sabe de hilos; `device.rs`
 | `src/gui/assets.rs` | Archivos de `ui/` incluidos en el exe (o leídos de `RZR_UI_DIR`). |
 | `src/gui/diag.rs` | Lógica de la prueba guiada (sin interfaz). |
 | `src/config.rs` | Perfiles y ajustes; carga, valida (`sanitize`) y guarda `config.json`. |
+| `src/mic.rs` | Mejoras del micrófono del perfil: presets de EQ, curvas y a qué parámetros de THX corresponde cada mejora. Sin E/S. |
 | `src/synapse.rs` | Importa perfiles `.synapse4`. |
 | `src/winaudio.rs` | Volumen, silencio, lista de dispositivos y dispositivo predeterminado de Windows. |
-| `src/thx.rs` | Estado de THX (el JSON del registro de la salida de los audífonos) y sus cambios: los interruptores por la interfaz COM del servicio de THX ([ADR 0004](adr/0004-thx-por-com.md)), la normalización y los niveles por ZeroMQ ([ADR 0005](adr/0005-thx-por-zeromq.md)). |
+| `src/thx.rs` | Estado de THX (el JSON del registro de la salida de los audífonos) y sus cambios: los interruptores por la interfaz COM del servicio de THX ([ADR 0004](adr/0004-thx-por-com.md)), la normalización y los niveles por ZeroMQ ([ADR 0005](adr/0005-thx-por-zeromq.md)); las mejoras del micrófono por `IVSSrvSettings` ([ADR 0007](adr/0007-microfono-en-el-perfil.md)). |
 | `src/thx/zmtp.rs` | Lo mínimo de ZeroMQ para hablar con el servicio de THX: saludo ZMTP 3.1 y tramas de un socket `REQ`. Sin bibliotecas. |
 | `src/thx/proto.rs` | Los mensajes protobuf del servicio de THX (`Register`, `State`, su respuesta). Sin E/S. |
 | `src/connlog.rs` | Registro de caídas del enlace (`conexion.log`). |
@@ -79,7 +80,7 @@ Ejemplo: el usuario elige el preset CS2.
 - **Comandos (página → Rust):** el enum `Msg` en `src/gui/mod.rs`. JSON con un campo `cmd` en snake_case y sus argumentos. Un comando desconocido se ignora y queda en `debug.log`.
 - **Estado (Rust → página):** `App::view()` en `src/gui/mod.rs`. Se envía completo cada vez que algo cambia; la página no guarda estado propio salvo lo visual (pestaña abierta, arrastre en curso, diálogos locales).
 - **Avisos:** `rzr.toast(texto, error)`.
-- **Enlaces en el HTML:** `data-text`, `data-show`, `data-level-from`, `data-toggle`, `data-slider`, `data-send`, `data-open` (descritos al inicio de `ui/index.html`). Con ellos, la mayoría de las funciones nuevas no necesitan JavaScript.
+- **Enlaces en el HTML:** `data-text`, `data-show`, `data-level-from`, `data-toggle`, `data-slider`, `data-send`, `data-args`, `data-open` (descritos al inicio de `ui/index.html`). Con ellos, la mayoría de las funciones nuevas no necesitan JavaScript.
 
 `ui/demo.js` imita a Rust con datos fijos. Si cambias el estado o los comandos, actualízalo también.
 
@@ -88,7 +89,7 @@ Ejemplo: el usuario elige el preset CS2.
 - **Hilo principal:** el bucle de eventos de la ventana (tao). Todo lo de `App` corre aquí; nunca se bloquea con E/S del headset.
 - **Hilo del headset:** único dueño del `Device`. Recibe `DevCmd` y agrupa los que llegan juntos (varios cambios se aplican una vez).
 - **Hilo de audio:** habla con Core Audio de Windows (COM). Cada 2 s envía el estado de volumen y dispositivos.
-- **Hilo de THX:** cada 2 s lee el estado de THX. Al cambiar una opción o el EQ de THX espera (hasta 6 s) a que el servicio de THX lo guarde; va aparte para no frenar el volumen mientras tanto. De varias curvas que llegan juntas solo aplica la última.
+- **Hilo de THX:** cada 2 s lee el estado de THX. Al cambiar una opción o el EQ de THX espera (hasta 6 s) a que el servicio de THX lo guarde; va aparte para no frenar el volumen mientras tanto. De varias curvas (o ajustes del micrófono) que llegan juntas solo aplica la última. Manda las mejoras del micrófono al conectarse al servicio y cuando cambian.
 - **Entre procesos:**
   - `Local\rzr_hid_bus`: candado alrededor de cada secuencia. El panel y el proceso en segundo plano tienen el dongle abierto a la vez; sin él, una consulta de uno puede cortar la escritura del otro.
   - `Global\rzr_blackshark_v2_pro`: garantiza un solo proceso en segundo plano. El panel lo consulta para no duplicar el registro de caídas.

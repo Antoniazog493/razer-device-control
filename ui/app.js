@@ -38,6 +38,11 @@ function esc(text) {
   return String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
 }
 
+/** Extra arguments for an element's command: data-args='{"effect": "voice_gate"}'. */
+function args(el) {
+  return el.dataset.args ? JSON.parse(el.dataset.args) : {};
+}
+
 function setChecked(el, on) {
   el.setAttribute("role", "switch");
   el.setAttribute("aria-checked", on ? "true" : "false");
@@ -67,6 +72,7 @@ function render() {
   renderProfiles();
   renderBattery();
   renderEq();
+  renderMic();
   renderAudio();
   renderThx();
   renderPower();
@@ -79,7 +85,7 @@ function renderTabs() {
   for (const p of $$("[data-page]")) p.hidden = p.dataset.page !== tab;
   // Sizes are only known once the page is visible.
   for (const el of $$(`[data-page="${tab}"] .slider`)) paintSlider(el);
-  if (tab === "sound") drawEq();
+  for (const g of Object.values(graphs)) drawGraph(g);
 }
 
 function setTab(name) {
@@ -185,7 +191,7 @@ function sendAdvanced(change) {
  * Build a slider inside <div class="slider">. Attributes: data-min,
  * data-max, data-step, data-unit (appended to the value), data-labels
  * ("left,right"). With data-slider/data-send it's bound to the state and
- * sends {cmd, value, commit: true} when released.
+ * sends {cmd, ...data-args, value, commit: true} when released.
  */
 function makeSlider(el) {
   const [left, right] = (el.dataset.labels || ",").split(",");
@@ -202,7 +208,7 @@ function makeSlider(el) {
   });
   input.addEventListener("change", () => {
     delete el.dataset.active;
-    if (el.dataset.send) send(el.dataset.send, { value: Number(input.value), commit: true });
+    if (el.dataset.send) send(el.dataset.send, { ...args(el), value: Number(input.value), commit: true });
   });
 }
 
@@ -236,51 +242,131 @@ const REGIONS = [
   [8, 9, "AGUDOS"],
 ];
 
-const eq = {
-  bands: [],
-  editable: false,
-  drag: null, // band being dragged
-  hover: null,
-  // After a drag, states for the same preset may still carry the old curve
-  // until rzr has handled our change: ignore those for a moment.
-  hold: 0,
-  holdPreset: null,
-  plot: null,
-};
+/** EQ graphs by name, made in setup(): the headset's and the microphone's. */
+const graphs = {};
+
+/**
+ * An EQ graph drawn in `box`. When a drag on it ends it sends `cmd` with
+ * {bands}. Its curve, range and whether it can be edited come from setGraph().
+ */
+function makeGraph(box, cmd, height) {
+  const g = {
+    box, cmd, height,
+    bands: [],
+    min: -5, max: 5,
+    editable: false,
+    drag: null, // band being dragged
+    hover: null,
+    // After a drag, states for the same preset may still carry the old curve
+    // until rzr has handled our change: ignore those for a moment.
+    hold: 0,
+    holdKey: null,
+    key: null,
+    plot: null,
+  };
+  const bandAt = (clientX) => {
+    const r = box.getBoundingClientRect();
+    const i = Math.floor((clientX - r.left - g.plot.l) / g.plot.dx);
+    return Math.max(0, Math.min(g.bands.length - 1, i));
+  };
+  const dbAt = (clientY) => {
+    const r = box.getBoundingClientRect();
+    const t = (clientY - r.top - g.plot.t) / (g.plot.b - g.plot.t);
+    return Math.round(Math.max(g.min, Math.min(g.max, g.max - t * (g.max - g.min))));
+  };
+  box.addEventListener("pointerdown", (e) => {
+    if (!g.editable || !g.plot || e.button !== 0) return;
+    box.setPointerCapture(e.pointerId);
+    g.drag = bandAt(e.clientX);
+    g.bands[g.drag] = dbAt(e.clientY);
+    drawGraph(g);
+  });
+  box.addEventListener("pointermove", (e) => {
+    if (!g.plot) return;
+    if (g.drag !== null) {
+      const db = dbAt(e.clientY);
+      if (db !== g.bands[g.drag]) {
+        g.bands[g.drag] = db;
+        drawGraph(g);
+      }
+      return;
+    }
+    const r = box.getBoundingClientRect();
+    const inside = e.clientY - r.top <= g.plot.b + 60;
+    const hover = inside ? bandAt(e.clientX) : null;
+    if (hover !== g.hover) {
+      g.hover = hover;
+      drawGraph(g);
+    }
+  });
+  const release = () => {
+    if (g.drag === null) return;
+    g.drag = null;
+    g.hold = Date.now() + 1000;
+    g.holdKey = g.key;
+    send(g.cmd, { bands: g.bands });
+    drawGraph(g);
+  };
+  box.addEventListener("pointerup", release);
+  box.addEventListener("pointercancel", release);
+  box.addEventListener("pointerleave", () => {
+    if (g.drag === null && g.hover !== null) {
+      g.hover = null;
+      drawGraph(g);
+    }
+  });
+  return g;
+}
+
+/** New state for a graph. `key` names the preset shown (for the hold after a drag). */
+function setGraph(g, { curve, editable, key, min, max }) {
+  Object.assign(g, { editable, key, min, max });
+  g.box.classList.toggle("editable", editable);
+  const same = JSON.stringify(curve) === JSON.stringify(g.bands);
+  const held = key === g.holdKey && Date.now() < g.hold && !same;
+  if (g.drag === null && !held) g.bands = [...curve];
+  drawGraph(g);
+}
 
 function renderEq() {
   const p = S.profile;
   for (const b of $$("#eq-mode button")) b.setAttribute("aria-pressed", b.dataset.mode === p.eq_mode ? "true" : "false");
-  const list = S.presets[p.eq_mode];
-  const box = $("#presets");
+  fillButtons($("#presets"), "preset", S.presets[p.eq_mode], p.preset);
+  setGraph(graphs.eq, { curve: p.curve, editable: p.editable, key: p.preset, min: S.eq.min, max: S.eq.max });
+}
+
+function renderMic() {
+  const m = S.mic;
+  fillButtons($("#mic-presets"), "mic-preset", m.presets, m.eq_preset);
+  setGraph(graphs.mic, { curve: m.curve, editable: m.editable, key: m.eq_preset, min: m.min, max: m.max });
+}
+
+/** Preset buttons (data-<attr>="id"), rebuilt only when the list changes. */
+function fillButtons(box, attr, list, selected) {
   const key = JSON.stringify(list);
   if (box.dataset.key !== key) {
     box.dataset.key = key;
-    box.innerHTML = list.map((x) => `<button data-preset="${x.id}">${esc(x.label)}</button>`).join("");
+    box.innerHTML = list.map((x) => `<button data-${attr}="${x.id}">${esc(x.label)}</button>`).join("");
   }
-  for (const b of $$("button", box)) b.setAttribute("aria-pressed", b.dataset.preset === p.preset ? "true" : "false");
-
-  eq.editable = p.editable;
-  $("#eq").classList.toggle("editable", p.editable);
-  const same = JSON.stringify(p.curve) === JSON.stringify(eq.bands);
-  const held = p.preset === eq.holdPreset && Date.now() < eq.hold && !same;
-  if (eq.drag === null && !held) eq.bands = [...p.curve];
-  drawEq();
+  for (const b of $$("button", box)) {
+    b.setAttribute("aria-pressed", b.getAttribute(`data-${attr}`) === selected ? "true" : "false");
+  }
 }
 
-function drawEq() {
-  const box = $("#eq");
+function drawGraph(g) {
+  const box = g.box;
   const w = box.clientWidth;
-  const h = 320;
-  if (!S || !w || !eq.bands.length) return;
-  const { min, max, freqs } = S.eq;
-  const n = eq.bands.length;
+  const h = g.height;
+  if (!S || !w || !g.bands.length) return;
+  const { min, max } = g;
+  const freqs = S.eq.freqs;
+  const n = g.bands.length;
   const plot = { l: 4, r: w - 64, t: 34, b: h - 70 };
   const dx = (plot.r - plot.l) / n;
-  eq.plot = { ...plot, dx };
+  g.plot = { ...plot, dx };
   const x = (i) => plot.l + dx * (i + 0.5);
   const y = (db) => plot.t + ((max - Math.max(min, Math.min(max, db))) / (max - min)) * (plot.b - plot.t);
-  const lit = eq.drag ?? eq.hover;
+  const lit = g.drag ?? g.hover;
 
   let svg = "";
   for (const db of [max, 0, min]) {
@@ -292,13 +378,13 @@ function drawEq() {
     svg += `<circle class="zero" cx="${x(i)}" cy="${y(0)}" r="2"/>`;
     svg += `<text class="freq${on}" x="${x(i)}" y="${plot.b + 18}">${freqs[i]}</text>`;
   }
-  const points = eq.bands.map((db, i) => `${x(i)},${y(db)}`).join(" ");
+  const points = g.bands.map((db, i) => `${x(i)},${y(db)}`).join(" ");
   svg += `<polyline class="curve" points="${points}"/>`;
-  eq.bands.forEach((db, i) => {
-    svg += `<circle class="node" cx="${x(i)}" cy="${y(db)}" r="${eq.drag === i ? 9 : eq.editable ? 7 : 6}"/>`;
+  g.bands.forEach((db, i) => {
+    svg += `<circle class="node" cx="${x(i)}" cy="${y(db)}" r="${g.drag === i ? 9 : g.editable ? 7 : 6}"/>`;
   });
   if (lit !== null && lit !== undefined) {
-    const v = eq.bands[lit];
+    const v = g.bands[lit];
     const label = `${v > 0 ? "+" : ""}${v} dB`;
     const bw = label.length * 6.5 + 10;
     const cy = y(v) - 22;
@@ -314,64 +400,11 @@ function drawEq() {
   box.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">${svg}</svg>`;
 }
 
-function eqBandAt(clientX) {
-  const r = $("#eq").getBoundingClientRect();
-  const i = Math.floor((clientX - r.left - eq.plot.l) / eq.plot.dx);
-  return Math.max(0, Math.min(eq.bands.length - 1, i));
-}
-
-function eqDbAt(clientY) {
-  const r = $("#eq").getBoundingClientRect();
-  const { min, max } = S.eq;
-  const t = (clientY - r.top - eq.plot.t) / (eq.plot.b - eq.plot.t);
-  return Math.round(Math.max(min, Math.min(max, max - t * (max - min))));
-}
-
-function setupEq() {
-  const box = $("#eq");
-  box.addEventListener("pointerdown", (e) => {
-    if (!eq.editable || !eq.plot || e.button !== 0) return;
-    box.setPointerCapture(e.pointerId);
-    eq.drag = eqBandAt(e.clientX);
-    eq.bands[eq.drag] = eqDbAt(e.clientY);
-    drawEq();
-  });
-  box.addEventListener("pointermove", (e) => {
-    if (!eq.plot) return;
-    if (eq.drag !== null) {
-      const db = eqDbAt(e.clientY);
-      if (db !== eq.bands[eq.drag]) {
-        eq.bands[eq.drag] = db;
-        drawEq();
-      }
-      return;
-    }
-    const r = box.getBoundingClientRect();
-    const inside = e.clientY - r.top <= eq.plot.b + 60;
-    const hover = inside ? eqBandAt(e.clientX) : null;
-    if (hover !== eq.hover) {
-      eq.hover = hover;
-      drawEq();
-    }
-  });
-  const release = () => {
-    if (eq.drag === null) return;
-    eq.drag = null;
-    eq.hold = Date.now() + 1000;
-    eq.holdPreset = S.profile.preset;
-    send("eq_bands", { bands: eq.bands });
-    drawEq();
-  };
-  box.addEventListener("pointerup", release);
-  box.addEventListener("pointercancel", release);
-  box.addEventListener("pointerleave", () => {
-    if (eq.drag === null && eq.hover !== null) {
-      eq.hover = null;
-      drawEq();
-    }
-  });
+function setupGraphs() {
+  graphs.eq = makeGraph($("#eq"), "eq_bands", 320);
+  graphs.mic = makeGraph($("#mic-eq"), "mic_eq_bands", 280);
   new ResizeObserver(() => {
-    drawEq();
+    for (const g of Object.values(graphs)) drawGraph(g);
     for (const el of $$(".slider")) paintSlider(el);
   }).observe($("main"));
 }
@@ -487,7 +520,7 @@ function onClick(e) {
     if (t.getAttribute("aria-disabled") === "true") return;
     const on = t.getAttribute("aria-checked") !== "true";
     setChecked(t, on);
-    if (d.toggle) send(d.send, { on });
+    if (d.toggle) send(d.send, { ...args(t), on });
     else if (t.id === "out-mute" || t.id === "in-mute") {
       const ep = S.audio[t.id.slice(0, -5)];
       if (ep) send("mute", { id: ep.id, muted: !on });
@@ -498,6 +531,7 @@ function onClick(e) {
   if (d.tab) return setTab(d.tab);
   if (d.mode) return d.mode !== S.profile.eq_mode && send("eq_mode", { mode: d.mode });
   if (d.preset) return d.preset !== S.profile.preset && send("preset", { preset: d.preset });
+  if (d.micPreset) return d.micPreset !== S.mic.eq_preset && send("mic_eq_preset", { preset: d.micPreset });
   if (d.press) return send("wizard_press", { k: Number(d.press) });
   if (d.answer) return send("wizard_answer", { heard: d.answer === "true" });
   if (t.id === "profile-menu-button") {
@@ -528,7 +562,7 @@ function onClick(e) {
 function setup() {
   try { tab = localStorage.getItem("rzr.tab") || tab; } catch (_) {}
   for (const el of $$(".slider")) makeSlider(el);
-  setupEq();
+  setupGraphs();
 
   document.addEventListener("click", onClick);
   document.addEventListener("contextmenu", (e) => e.preventDefault());

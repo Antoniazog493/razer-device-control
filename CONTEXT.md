@@ -46,6 +46,10 @@ _Evitar:_ "preajuste" en el código (se usa solo en la interfaz, como sinónimo 
 
 **Sidetone** (sidetone): escuchar tu propia voz por los audífonos. En la interfaz: "Monitoreo de micrófono".
 
+**Mejoras del micrófono** (mic enhancements): EQ del micrófono, normalización de volumen, claridad vocal, reducción de ruido y puerta de voz. Las hace el efecto de micrófono de THX, no el headset; se guardan en el perfil.
+
+**Puerta de voz** (voice gate): corta lo que el micrófono capta por debajo de un umbral en dB (−40 a −20). En la interfaz: "Sensibilidad".
+
 **No molestar** (dnd): bloquea las llamadas del celular por Bluetooth mientras se usa el dongle.
 
 **Apagado automático** (auto off): minutos sin uso tras los que el headset se apaga (15 a 60).

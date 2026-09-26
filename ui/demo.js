@@ -22,6 +22,13 @@
   const list = (ids) => ids.map((id) => ({ id, label: labels[id] }));
   const standard = ["game", "movie", "music", "custom"];
   let custom = [1, -2, 1, -3, 1, -3, -5, 2, 2, 3];
+  const micCurves = {
+    default: [0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+    mic_boost: [0, 2, 3, 4, 5, 5, 5, 4, 3, 1],
+    broadcast: [4, 4, 4, 3, -2, -7, -4, -2, -3, -5],
+    conference: [-8, -7, -5, -3, -1, 1, 3, 2, 1, 0],
+  };
+  let micCustom = [6, 0, 0, 0, 0, 12, 0, 0, 0, -12];
   const selected = { standard: "custom", esports: "apex_legends" };
 
   const S = {
@@ -62,6 +69,22 @@
       spatial: false, bass_boost: true, bass_boost_level: 50,
       normalization: false, normalization_level: 100, voice_clarity: false, voice_clarity_level: 100,
     },
+    mic: {
+      eq_preset: "default",
+      presets: [
+        { id: "default", label: "PREDETERMINADO" }, { id: "mic_boost", label: "REFUERZO DE MICRÓFONO" },
+        { id: "broadcast", label: "TRANSMISIÓN" }, { id: "conference", label: "CONFERENCIA" },
+        { id: "custom", label: "PERSONALIZADO" },
+      ],
+      editable: false, curve: micCurves.default, min: -12, max: 12,
+      effects: {
+        normalization: { on: false, level: 55, min: 0, max: 100 },
+        voice_clarity: { on: true, level: 60, min: 0, max: 100 },
+        noise_reduction: { on: false, level: 55, min: 0, max: 100 },
+        voice_gate: { on: false, level: -30, min: -40, max: -20 },
+      },
+      available: true,
+    },
     connlog: {
       drops_today: 1,
       lines: [
@@ -81,6 +104,12 @@
     S.device.preset = labels[p.preset];
     // Like rzr with THX installed: the headset preset also picks THX's.
     S.thx.preset = { game: "Juego", movie: "Película", music: "Música" }[p.preset] || "Personalizado";
+  }
+
+  function refreshMic() {
+    const m = S.mic;
+    m.editable = m.eq_preset === "custom";
+    m.curve = m.editable ? micCustom : micCurves[m.eq_preset];
   }
 
   const handlers = {
@@ -110,6 +139,11 @@
     thx_bass_boost_level({ value }) { S.thx.bass_boost_level = value; },
     thx_normalization_level({ value }) { S.thx.normalization_level = value; },
     thx_voice_clarity_level({ value }) { S.thx.voice_clarity_level = value; },
+    mic_eq_preset({ preset }) { S.mic.eq_preset = preset; refreshMic(); },
+    mic_eq_bands({ bands }) { micCustom = bands; refreshMic(); },
+    mic_eq_reset() { micCustom = Array(10).fill(0); refreshMic(); },
+    mic_effect({ effect, on }) { S.mic.effects[effect].on = on; },
+    mic_effect_level({ effect, value }) { S.mic.effects[effect].level = value; },
     volume({ id, value }) { S.audio[id].volume = value; },
     mute({ id, muted }) { S.audio[id].muted = muted; },
     default_device({ flow, id }) { S.audio[`default_${flow}`] = id; },

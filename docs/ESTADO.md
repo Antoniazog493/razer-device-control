@@ -46,6 +46,9 @@ Leyenda de verificación:
 | THX: Normalización (activar/desactivar y nivel) | 🟡 ⏳ | Por ZeroMQ, igual que Synapse. El servicio la guarda (confirmado en el JSON), pero con música **no se notó**, ni desde rzr ni desde un script (prueba a ciegas del 2026-09-26: de tres cambios solo se notó el de Spatial). Falta una prueba mejor (ver "Esperando al usuario"). |
 | EQ como Synapse: el preset del headset elige también el preset y la curva de THX | ✅ | [ADR 0006](adr/0006-eq-como-synapse.md). Oído el 2026-09-26: Juego/Película/Música, los cinco Esports (THX `Custom` con su curva) y la curva Personalizada al arrastrarla; cada cambio queda en THX en menos de 1 s. Al cambiar Spatial, rzr vuelve a poner la curva (THX la cambiaba por otra plana). Con el botón EQ del headset: 🟡 sin probar. |
 | Prueba guiada del EQ (ronda 2) | 🟡 ⏳ | |
+| Mejoras del micrófono por THX (EQ con presets y Personalizado, normalización, claridad vocal, reducción de ruido, puerta de voz) | ✅ | [ADR 0007](adr/0007-microfono-en-el-perfil.md). Oído el 2026-09-26 con Synapse cerrado, escuchando el micrófono en vivo: todas cambian y sus niveles también. Se guardan en el perfil; cada cambio se confirma leyendo el servicio. |
+| Preset de EQ del micrófono en el headset (`0x96`) | 🟡 | Mismos bytes que Synapse; se envía con el perfil. Su efecto no se nota aparte (el EQ que se oye es el de THX). |
+| Volver a poner las mejoras del micrófono tras reiniciar la PC | 🟡 ⏳ | El proceso en segundo plano las manda a THX al conectarse a su servicio. Falta la prueba (ver "Esperando al usuario"). |
 | Registro de depuración (`debug.log`) | ✅ | Registra también los cambios de THX. |
 
 ### Investigación
@@ -55,13 +58,14 @@ Leyenda de verificación:
 - Dónde guarda THX sus ajustes: ✅ en el registro de la salida de los audífonos (JSON en `{d5e8f0ab-…},6`, protobuf en `,7`) y en `HKCU\Software\THX`. Qué campo cambia cada opción: ✅. Ver [HALLAZGOS.md](HALLAZGOS.md#dónde-guarda-thx-sus-ajustes).
 - Cómo le llegan los ajustes: ✅ los guarda el servicio de THX (`VSSrv`, `LocalSystem`, sin Synapse). Tiene dos entradas, y rzr usa las dos: una **interfaz COM** ([ADR 0004](adr/0004-thx-por-com.md)) y ZeroMQ, lo que usa Synapse ([ADR 0005](adr/0005-thx-por-zeromq.md)). `spatial-config-util.exe` no sirve para esto. Ver [HALLAZGOS.md](HALLAZGOS.md#cómo-le-llegan-los-ajustes-a-thx).
 - Bass Boost de THX sigue sonando con Synapse cerrado y los servicios de Razer detenidos: ✅ (de oído, captura `-Fase thx`).
-- Mejoras de micrófono con THX instalado: van al motor THX (`SetCapture…`) ✅; dónde se guardan: sin averiguar.
+- Mejoras de micrófono con THX instalado: van al motor THX por `IVSSrvSettings` ✅. Dónde las guarda THX: no se encontró (ni en el registro de THX ni en el del micrófono); probablemente solo en memoria ([ADR 0007](adr/0007-microfono-en-el-perfil.md)).
 - Claves de registro de las mejoras de Windows (Bass Boost, Loudness): ✅ capturadas; no implementadas.
 
 ## Esperando al usuario (en la PC)
 
-1. **Normalización de THX con un audio de mucho contraste:** un video o una película con partes muy bajas (susurros) y muy fuertes (explosiones). En MEJORAS, con la normalización al 100, apagarla y encenderla: con ella encendida, lo bajo debería sonar más fuerte y lo fuerte, más suave. Si no se nota, probar lo mismo desde Synapse para saber si es cosa de rzr.
-2. **Ronda 2 de la prueba guiada** (AJUSTES › DIAGNÓSTICO) y enviar `debug.log`. Ya no es urgente: el EQ que se oye va por THX (ver "Sigue" 1). Sirve para saber si la curva del headset puede funcionar sin THX.
+1. **Mejoras del micrófono tras reiniciar:** con "Iniciar con Windows" activado y alguna mejora encendida en el perfil (por ejemplo la reducción de ruido), reiniciar la PC **sin abrir el panel ni Synapse** y escucharse en vivo: la mejora debería seguir activa. Si no, abrir el panel y comprobar que vuelve (eso confirmaría que THX las olvida y que falla el proceso en segundo plano).
+2. **Normalización de THX con un audio de mucho contraste:** un video o una película con partes muy bajas (susurros) y muy fuertes (explosiones). En MEJORAS, con la normalización al 100, apagarla y encenderla: con ella encendida, lo bajo debería sonar más fuerte y lo fuerte, más suave. Si no se nota, probar lo mismo desde Synapse para saber si es cosa de rzr.
+3. **Ronda 2 de la prueba guiada** (AJUSTES › DIAGNÓSTICO) y enviar `debug.log`. Ya no es urgente: el EQ que se oye va por THX (ver "Sigue" 1). Sirve para saber si la curva del headset puede funcionar sin THX.
 
 ## Sigue (en orden)
 
@@ -70,7 +74,7 @@ El sondeo de Synapse del 2026-09-26 mostró qué hace Synapse con THX instalado 
 1. ~~Niveles de THX por ZeroMQ~~: hecho el 2026-09-26 (cliente propio en `src/thx/`, [ADR 0005](adr/0005-thx-por-zeromq.md), sliders en MEJORAS). Queda confirmar de oído la normalización ("Esperando al usuario" 1).
 2. ~~EQ como Synapse~~: hecho el 2026-09-26 ([ADR 0006](adr/0006-eq-como-synapse.md)). Falta probar el botón EQ del headset con rzr abierto (debe cambiar también el preset de THX).
 3. ~~Sidetone como Synapse~~: no hizo falta; el sidetone del headset se oye con Synapse cerrado (2026-09-26). No se tocó el sidetone de THX. Si vuelve a fallar, el plan era fijar y activar el de THX (`IVSSrvSettings::SetInputSidetoneLevel`/`SetInputSidetoneState`, o abrir una captura del micrófono; ver [HALLAZGOS.md](HALLAZGOS.md#micrófono)).
-4. **Micrófono por THX** (`IVSSrvSettings`, parámetros ya identificados en [HALLAZGOS.md](HALLAZGOS.md#micrófono)): EQ con presets (Default, MicBoost, Broadcast, Conference y Personalizado de −12 a +12, con `0x96` al headset), normalización (14/15), claridad de voz (10/11), reducción de ruido (6/7) y puerta de voz (2/3, en dB). Probar de oído grabando o con el sidetone (aunque el de Synapse no pasa por las mejoras).
+4. ~~Micrófono por THX~~: hecho el 2026-09-26 ([ADR 0007](adr/0007-microfono-en-el-perfil.md)). Queda la prueba tras reiniciar ("Esperando al usuario" 1).
 5. **Separar THX de Synapse.** Respaldar los instaladores de THX de `C:\ProgramData\Package Cache` (fuera del repo), desinstalar Synapse, reinstalar solo THX y confirmar que el efecto, `VSSrv` y rzr siguen funcionando ([HALLAZGOS.md](HALLAZGOS.md#paquete-de-driver)). Ya no hace falta Synapse para sondear; conviene hacerlo cuando 1 a 4 funcionen en rzr, por si hay que volver a comparar.
 6. **Revisar la configuración de audio de Windows:** avisar si las mejoras de audio están desactivadas o Windows Sonic encendido, y ofrecer corregirlo.
 7. **Confirmar en hardware** lo marcado 🟡 y actualizar esta tabla.
@@ -83,7 +87,8 @@ El sondeo de Synapse del 2026-09-26 mostró qué hace Synapse con THX instalado 
 - Guardar los ajustes de THX en el perfil y aplicarlos al conectar (hoy son ajustes de Windows, fuera del perfil).
 - Ícono en la bandeja del sistema para el proceso en segundo plano (batería, preset, abrir el panel).
 - Otros modelos (BlackShark V3, HyperSpeed): OpenRazer los describe con una ficha por modelo; se podría hacer igual.
-- Mejoras de micrófono con Equalizer APO o RNNoise.
+- Mejoras de micrófono con Equalizer APO o RNNoise, para quien no tenga THX.
+- Importar de `.synapse4` también las mejoras del micrófono (`micVolumeNormalization`, `micVoiceClarity`, `ambientNoiseReduction`, `micSensitivity`, `micEqualizer`).
 - Aviso de batería baja.
 
 ## Deuda técnica
