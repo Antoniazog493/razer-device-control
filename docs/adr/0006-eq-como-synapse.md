@@ -18,6 +18,7 @@ Detalle en [HALLAZGOS.md](../HALLAZGOS.md#ecualizador).
 ## Decisión
 
 - Cada vez que cambia el EQ del perfil, rzr manda al headset lo mismo que antes y, si THX está instalado, también el preset y la curva de THX, como Synapse. Pasa al elegir un preset, mover la curva, restablecerla, cambiar de perfil, aplicarlo o pulsar el botón EQ del headset.
+- **El botón EQ manda sobre el perfil:** con el panel cerrado, el proceso en segundo plano sigue al botón (guarda el preset en el perfil y cambia THX). Si no había ningún rzr corriendo, el panel adopta al abrirse el preset en que está el headset en vez de volver al del perfil (añadido el 2026-09-26).
 - **Caminos:**
   - el preset de THX, por ZeroMQ (`thx.sa.SetPreset`, [ADR 0005](0005-thx-por-zeromq.md)), solo si cambia;
   - la curva, por COM (`SetCurrentModeEQGains`, ya verificado de oído), releyéndola con `GetCurrentModeEQGains`.

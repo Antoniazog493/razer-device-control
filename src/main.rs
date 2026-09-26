@@ -22,6 +22,7 @@ use std::time::{Duration, Instant};
 
 use config::Config;
 use mic::MicSettings;
+use thx::ThxEq;
 use worker::Target;
 
 #[cfg(windows)]
@@ -163,7 +164,7 @@ fn run_watch(silent: bool) {
     // Consecutive failed link checks; one dropped reply isn't a disconnect.
     let mut misses = 0;
     let mut next_check = Instant::now();
-    let mut mic = MicSync::default();
+    let mut thx = ThxSync::default();
     winaudio::com_init();
 
     if !silent {
@@ -197,6 +198,9 @@ fn run_watch(silent: bool) {
 
         match d.take_events(250) {
             Ok(events) => {
+                if applied && events.iter().any(|e| e.preset().is_some()) {
+                    follow_preset(d, &mut thx);
+                }
                 for link in events.iter().filter_map(|e| e.link()) {
                     log.update(link, "aviso del headset");
                     if link {
@@ -226,7 +230,7 @@ fn run_watch(silent: bool) {
         let cfg = Config::load();
         debuglog::set_enabled(cfg.debug_log);
         d.set_options(device::Options::from_config(&cfg));
-        mic.sync(&cfg.profile().mic);
+        thx.sync_mic(&cfg.profile().mic);
 
         let connected = match d.link_status() {
             Ok(c) => c,
@@ -282,30 +286,69 @@ fn run_watch(silent: bool) {
     }
 }
 
+/// The headset's EQ button switched presets while no panel is open: keep the
+/// profile and THX with it, as the panel does (ADR 0006). The event only says
+/// something changed; the preset read afterwards decides (a select of ours can
+/// briefly land elsewhere and send one too).
+fn follow_preset(d: &device::Device, thx: &mut ThxSync) {
+    if instance::panel_open() {
+        return; // the panel follows it
+    }
+    let Some(preset) = d.get_preset() else { return };
+    let mut cfg = Config::load();
+    if cfg.profile().active_preset() == preset {
+        return;
+    }
+    dlog!("segundo plano: botón EQ, el headset está en {preset:?}");
+    cfg.profile_mut().select_preset(preset);
+    if let Err(e) = cfg.save() {
+        dlog!("segundo plano: {e}");
+    }
+    let p = cfg.profile();
+    thx.set_eq(&ThxEq::new(p.active_preset(), p.active_curve()));
+}
+
+/// The background watcher's link to the THX service.
+///
 /// Keeps THX's microphone enhancements as the profile has them: THX forgets
 /// them when its service restarts (e.g. after a reboot), and Synapse isn't
 /// there to send them again (ADR 0007). They're sent when the profile changes
 /// and whenever the connection to the service is (re)made, not on every
 /// check, so an open Synapse isn't fought over them.
 #[derive(Default)]
-struct MicSync {
+struct ThxSync {
     service: Option<thx::Service>,
     sent: Option<MicSettings>,
 }
 
-impl MicSync {
-    fn sync(&mut self, want: &MicSettings) {
+impl ThxSync {
+    /// The service, connecting if needed. None: THX isn't there (yet: the
+    /// service starts with Windows, maybe after us).
+    fn service(&mut self) -> Option<&thx::Service> {
         if self.service.as_ref().is_some_and(|s| !s.alive()) {
             dlog!("segundo plano: se perdió la conexión con el servicio de THX");
             self.service = None;
         }
         if self.service.is_none() {
-            // Not there yet (the service starts with Windows, maybe after us).
-            let Ok(s) = thx::Service::connect() else { return };
-            self.service = Some(s);
+            self.service = Some(thx::Service::connect().ok()?);
             self.sent = None;
         }
-        if self.sent.as_ref() == Some(want) {
+        self.service.as_ref()
+    }
+
+    fn set_eq(&mut self, eq: &ThxEq) {
+        let Some(service) = self.service() else { return };
+        match service.set_eq(eq) {
+            Ok(()) => dlog!("segundo plano: THX {eq:?}"),
+            Err(e) => {
+                dlog!("segundo plano: ecualizador de THX: {e}");
+                self.service = None;
+            }
+        }
+    }
+
+    fn sync_mic(&mut self, want: &MicSettings) {
+        if self.service().is_none() || self.sent.as_ref() == Some(want) {
             return;
         }
         let Some(service) = &self.service else { return };

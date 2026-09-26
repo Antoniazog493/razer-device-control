@@ -86,6 +86,12 @@ impl Event {
     pub fn link(&self) -> Option<bool> {
         (self.cmd == proto::CMD_WIRELESS).then(|| self.data.first() == Some(&1))
     }
+
+    /// Preset the headset switched to: its EQ button, or a select of ours
+    /// that briefly landed elsewhere (so read the preset before trusting it).
+    pub fn preset(&self) -> Option<EqPreset> {
+        (self.cmd == proto::CMD_PRESET_GET).then(|| self.data.first().and_then(|&s| EqPreset::from_selector(s)))?
+    }
 }
 
 /// Snapshot of the headset's read-only state.
@@ -611,5 +617,20 @@ fn log_hid_devices(api: &HidApi) {
             info.product_string().unwrap_or(""),
             info.path()
         );
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_preset_event_names_its_preset() {
+        let event = |cmd, data: &[u8]| Event { cmd, data: data.to_vec() };
+        assert_eq!(event(proto::CMD_PRESET_GET, &[0xFC]).preset(), Some(EqPreset::Valorant));
+        assert_eq!(event(proto::CMD_PRESET_GET, &[0x07]).preset(), Some(EqPreset::Game));
+        assert_eq!(event(proto::CMD_PRESET_GET, &[0x42]).preset(), None);
+        assert_eq!(event(proto::CMD_PRESET_GET, &[]).preset(), None);
+        assert_eq!(event(proto::CMD_WIRELESS, &[0x07]).preset(), None);
     }
 }

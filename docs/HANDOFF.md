@@ -80,15 +80,15 @@ Hecho el 2026-09-26, primera sesión:
 
 Hecho el 2026-09-26, segunda sesión (pasos 1 a 4, todos oídos por el usuario con Synapse cerrado):
 
-1. Niveles y normalización de THX por ZeroMQ, con un cliente propio ([ADR 0005](adr/0005-thx-por-zeromq.md)). La normalización se guarda, pero con música no se nota.
+1. Niveles y normalización de THX por ZeroMQ, con un cliente propio ([ADR 0005](adr/0005-thx-por-zeromq.md)). La normalización se guarda; con música no se notaba, con audio de mucho contraste sí se oye.
 2. EQ como Synapse: el preset del headset elige también el preset y la curva de THX ([ADR 0006](adr/0006-eq-como-synapse.md)).
 3. El sidetone del headset se oye con Synapse cerrado. No hizo falta el de THX.
 4. Mejoras del micrófono por THX, guardadas en el perfil ([ADR 0007](adr/0007-microfono-en-el-perfil.md)).
 
 **La próxima sesión:**
 
-- Las pruebas de "Esperando al usuario" en ESTADO: mejoras del micrófono tras reiniciar y normalización con audio de mucho contraste. (El botón EQ con rzr abierto ya se probó en la tercera sesión.)
-- Después, el paso 5: separar THX de Synapse.
+- El paso 5: separar THX de Synapse (instaladores ya respaldados; la normalización ya se oyó, no hace falta Synapse para comparar).
+- Después, la prueba de "Esperando al usuario" 1: mejoras del micrófono tras reiniciar, ya sin Synapse.
 
 Notas para los próximos pasos:
 

@@ -8,8 +8,8 @@ Cómo está construido rzr. Si cambias la estructura (un módulo nuevo, otro hil
 
 | Modo | Cómo se inicia | Qué hace |
 |---|---|---|
-| **Panel** | doble clic, `rzr`, `rzr --demo` | Abre la ventana. Mientras está abierta, aplica el perfil cuando el headset se conecta (si no lo hace ya el proceso en segundo plano). |
-| **Segundo plano** | `rzr --silent --watch` (lo que usa "Iniciar con Windows") | Sin ventana. Vigila el dongle y aplica el perfil en cada conexión. Manda a THX las mejoras del micrófono del perfil, que THX olvida al reiniciar ([ADR 0007](adr/0007-microfono-en-el-perfil.md)). Solo puede haber uno. |
+| **Panel** | doble clic, `rzr`, `rzr --demo` | Abre la ventana. Mientras está abierta, aplica el perfil cuando el headset se conecta (si no lo hace ya el proceso en segundo plano). Al abrirse con el headset encendido, primero adopta el preset en que está (lo pudo cambiar su botón EQ con rzr cerrado). Sigue al botón EQ y cambia THX con él. |
+| **Segundo plano** | `rzr --silent --watch` (lo que usa "Iniciar con Windows") | Sin ventana. Vigila el dongle y aplica el perfil en cada conexión. Manda a THX las mejoras del micrófono del perfil, que THX olvida al reiniciar ([ADR 0007](adr/0007-microfono-en-el-perfil.md)). Con el panel cerrado, sigue al botón EQ: guarda el preset en el perfil y cambia THX con él ([ADR 0006](adr/0006-eq-como-synapse.md)). Solo puede haber uno. |
 | **Línea de comandos** | `rzr apply`, `rzr import ARCHIVO`, `rzr help` | Hace una cosa y termina. |
 
 El panel y el proceso en segundo plano pueden correr a la vez: comparten el dongle mediante un candado (ver [Concurrencia](#hilos-y-concurrencia)).
@@ -59,7 +59,7 @@ Cada capa solo conoce a la de abajo. `protocol.rs` no sabe de hilos; `device.rs`
 | `src/thx/proto.rs` | Los mensajes protobuf del servicio de THX (`Register`, `State`, su respuesta). Sin E/S. |
 | `src/connlog.rs` | Registro de caídas del enlace (`conexion.log`). |
 | `src/debuglog.rs` | Registro de depuración opcional (`debug.log`) y la macro `dlog!`. |
-| `src/instance.rs` | Mutex de instancia única del proceso en segundo plano y candado del bus. |
+| `src/instance.rs` | Mutex de instancia única del proceso en segundo plano, marca de panel abierto y candado del bus. |
 | `src/registry.rs` | "Iniciar con Windows" y migración de la configuración antigua del registro. |
 | `ui/` | La interfaz. `demo.js` solo se usa al abrirla en un navegador. |
 | `tools/` | Scripts de investigación: `capturar-synapse.ps1` (capturas) y `decodificar-log.py`. |
@@ -93,6 +93,7 @@ Ejemplo: el usuario elige el preset CS2.
 - **Entre procesos:**
   - `Local\rzr_hid_bus`: candado alrededor de cada secuencia. El panel y el proceso en segundo plano tienen el dongle abierto a la vez; sin él, una consulta de uno puede cortar la escritura del otro.
   - `Global\rzr_blackshark_v2_pro`: garantiza un solo proceso en segundo plano. El panel lo consulta para no duplicar el registro de caídas.
+  - `Local\rzr_panel`: existe mientras hay un panel abierto (no la demo). El proceso en segundo plano lo consulta para no seguir al botón EQ a la vez que el panel.
 
 ## Archivos en disco
 

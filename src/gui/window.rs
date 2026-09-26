@@ -30,6 +30,9 @@ enum UserEvent {
 
 /// Open the panel. Returns only on failure; closing the window ends the process.
 pub fn run(demo: bool) -> Result<(), String> {
+    if !demo {
+        crate::instance::mark_panel_open();
+    }
     let event_loop = EventLoopBuilder::<UserEvent>::with_user_event().build();
     let wake = Mutex::new(event_loop.create_proxy());
     let notify: Notify = Arc::new(move || {

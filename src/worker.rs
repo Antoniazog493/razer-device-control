@@ -12,7 +12,7 @@ use crate::connlog::ConnLog;
 use crate::device::{self, Device, Options, Status};
 use crate::dlog;
 use crate::mic::MicSettings;
-use crate::protocol::{self, EqPreset, EQ_BANDS};
+use crate::protocol::{EqPreset, EQ_BANDS};
 use crate::thx::{self, ThxChange, ThxEq, ThxOption, ThxState};
 use crate::winaudio::{self, AudioDevice, Endpoint, Flow};
 
@@ -127,6 +127,7 @@ pub fn spawn_device_worker(target: Target, demo: bool, notify: Notify) -> (Sende
             demo,
             last_write: Instant::now() - PRESET_SETTLE,
             button_preset: false,
+            first_poll: true,
             diag: false,
             misses: 0,
             log: ConnLog::new("panel"),
@@ -147,6 +148,8 @@ struct DevWorker {
     /// The headset sent a preset event since the last poll (its EQ button,
     /// or a select of ours that briefly landed elsewhere).
     button_preset: bool,
+    /// The panel just opened: nothing read from the headset yet.
+    first_poll: bool,
     /// Guided test running: no polling, no automatic writes.
     diag: bool,
     /// Consecutive polls without the headset; one dropped reply isn't a
@@ -214,10 +217,7 @@ impl DevWorker {
             // The EQ button reports the new preset. A select of ours that
             // briefly lands elsewhere does too, so this only triggers a read:
             // what the headset plays once our write is done decides.
-            if e.cmd == protocol::CMD_PRESET_GET
-                && !self.diag
-                && e.data.first().and_then(|&s| EqPreset::from_selector(s)).is_some()
-            {
+            if e.preset().is_some() && !self.diag {
                 self.button_preset = true;
                 poll_now = true;
             }
@@ -346,6 +346,19 @@ impl DevWorker {
         }
     }
 
+    /// The panel opened with the headset already on: its EQ button may have
+    /// switched presets while no rzr was running, so keep the headset's
+    /// preset rather than overwrite it with the profile's. Not on a later
+    /// connect: a headset that was off may not be where it was left.
+    fn adopt_headset_preset(&mut self) {
+        let Some(p) = self.info.status.preset else { return };
+        if p != self.target.profile.active_preset() {
+            dlog!("al abrir, el headset está en {p:?}, el perfil dice {:?}", self.target.profile.active_preset());
+            self.target.profile.select_preset(p);
+            self.emit(DevEvent::PresetChanged { preset: p, from_button: true });
+        }
+    }
+
     /// Send changes to the headset, if it's there to receive them.
     fn push(&mut self, changes: &[Change]) {
         dlog!("enviar {changes:?}");
@@ -425,6 +438,7 @@ impl DevWorker {
 
     fn poll(&mut self) {
         let was_connected = self.info.status.headset_connected;
+        let first = std::mem::take(&mut self.first_poll);
         let Some(status) = self.read_status() else {
             self.log_link(false, "dongle no encontrado");
             self.set_info(DeviceInfo::default());
@@ -477,6 +491,9 @@ impl DevWorker {
             // unless the background watcher is already doing it — two
             // interleaved apply sequences would garble each other.
             if !crate::instance::watcher_running() {
+                if first {
+                    self.adopt_headset_preset();
+                }
                 self.push(&[Change::All]);
                 apply_default_devices(&self.target);
             }

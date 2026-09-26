@@ -27,6 +27,7 @@ Cambios que nota quien usa rzr. Formato basado en [Keep a Changelog](https://kee
 - El comando que se creía "volumen" (`0x93`) es el selector de preset; `0x9D` es la familia del preset.
 - El panel y el proceso en segundo plano ya no se interrumpen al usar el dongle a la vez.
 - Una sola lectura perdida ya no cuenta como desconexión.
+- El botón EQ del headset cambia también el ecualizador de THX con el panel cerrado (proceso en segundo plano), y el panel, al abrirse, muestra el preset en que quedó el headset en lugar de volver al del perfil.
 - El botón EQ del headset justo después de cambiar el preset desde el panel ya no da un aviso rojo de "no aceptó el cambio": el panel lo sigue al momento.
 - Las caídas del enlace se detectan al instante. El aviso del headset se perdía cuando llegaba en el mismo paquete que un mensaje corto del dongle, y `conexion.log` anotaba la caída unos segundos tarde y con una duración menor a la real.
 
