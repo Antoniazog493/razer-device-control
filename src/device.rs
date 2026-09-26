@@ -15,14 +15,15 @@ use std::cell::{Cell, RefCell};
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::config::{Config, EqMethod, Profile};
+use crate::config::Profile;
 use crate::debuglog::hex;
 use crate::dlog;
 use crate::instance::{BusGuard, BusLock};
+use crate::models::{HeadsetModel, RAZER_VID};
 use crate::protocol::{self as proto, EqPreset, Packet, EQ_BANDS};
 
-const VID: u16 = 0x1532;
-const PID: u16 = 0x0555;
+/// The only model rzr controls (see models.rs).
+const MODEL: HeadsetModel = HeadsetModel::BlackSharkV2Pro2023;
 const USAGE_PAGE_VENDOR: u16 = 0xFF00;
 const SLEEP_BETWEEN_CMDS: Duration = Duration::from_millis(35);
 /// Per-attempt reply wait; must stay below the link's doze threshold.
@@ -31,46 +32,13 @@ const QUERY_ATTEMPTS: usize = 3;
 /// How long to wait for another rzr process to finish its command sequence.
 const BUS_TIMEOUT_MS: u32 = 8000;
 /// Error returned when another rzr process kept the dongle busy.
-pub const BUSY: &str = "El dongle está ocupado por otro proceso de rzr";
-
-/// How to talk to the headset; comes from the config.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Options {
-    pub method: EqMethod,
-    /// Remote mode off after each command (see Config::release_remote).
-    pub release_remote: bool,
-    /// Send Synapse's startup frames before a full apply.
-    pub synapse_init: bool,
-    /// Value for 0x9E in those frames.
-    pub eq_status: u8,
-}
-
-impl Default for Options {
-    fn default() -> Self {
-        Self::from_config(&Config::default())
-    }
-}
-
-impl Options {
-    pub fn from_config(cfg: &Config) -> Self {
-        Self {
-            method: cfg.eq_method,
-            release_remote: cfg.release_remote,
-            synapse_init: cfg.send_legacy_config,
-            eq_status: cfg.eq_status,
-        }
-    }
-}
+pub const BUSY: &str = "The dongle is busy with another rzr process";
 
 pub struct Device {
     handle: hidapi::HidDevice,
     pub product: String,
     /// Unsolicited event frames seen while reading replies.
     events: RefCell<Vec<Event>>,
-    opts: Cell<Options>,
-    /// Lock kept across calls (guided test), see hold_bus(). Declared
-    /// before `bus` so it is released before the mutex handle is closed.
-    held: RefCell<Option<BusGuard>>,
     bus: BusLock,
 }
 
@@ -115,18 +83,14 @@ impl Device {
             log_hid_devices(&api);
 
             for info in api.device_list() {
-                if info.vendor_id() == VID && info.product_id() == PID && info.usage_page() == USAGE_PAGE_VENDOR {
+                if info.vendor_id() == RAZER_VID
+                    && MODEL.pid() == Some(info.product_id())
+                    && info.usage_page() == USAGE_PAGE_VENDOR
+                {
                     let handle = info.open_device(&api).map_err(|e| format!("Cannot open device: {e}"))?;
-                    let product = info.product_string().unwrap_or("Razer BlackShark V2 Pro").to_string();
-                    dlog!("dongle abierto: {:?}", info.path());
-                    return Ok(Device {
-                        handle,
-                        product,
-                        events: RefCell::new(Vec::new()),
-                        opts: Cell::new(Options::default()),
-                        held: RefCell::new(None),
-                        bus: BusLock::new(),
-                    });
+                    let product = info.product_string().unwrap_or(MODEL.name()).to_string();
+                    dlog!("dongle opened: {:?}", info.path());
+                    return Ok(Device { handle, product, events: RefCell::new(Vec::new()), bus: BusLock::new() });
                 }
             }
 
@@ -138,25 +102,12 @@ impl Device {
         }
     }
 
-    pub fn set_options(&self, opts: Options) {
-        if self.opts.replace(opts) != opts {
-            dlog!("opciones: {opts:?}");
-        }
-    }
-
     /// Take the cross-process command lock (recursive within a thread).
     fn lock(&self) -> Result<BusGuard, String> {
         self.bus.lock(BUS_TIMEOUT_MS).ok_or_else(|| {
-            dlog!("dongle ocupado por otro proceso");
+            dlog!("dongle busy with another process");
             BUSY.to_string()
         })
-    }
-
-    /// Keep the command lock between calls, so no other rzr process sends
-    /// anything meanwhile (used by the guided test).
-    pub fn hold_bus(&self, on: bool) {
-        let guard = if on { self.lock().ok() } else { None };
-        *self.held.borrow_mut() = guard;
     }
 
     /// Write one report.
@@ -190,13 +141,10 @@ impl Device {
         self.send(&proto::set_remote_mode(on))
     }
 
-    /// End of a sequence: hand control back to the headset, if configured.
+    /// End of a sequence: hand control back to the headset, as OpenRazer
+    /// does. (The first rzr release never did; it made no audible difference.)
     fn release(&self) -> Result<(), String> {
-        if self.opts.get().release_remote {
-            self.remote(false)
-        } else {
-            Ok(())
-        }
+        self.remote(false)
     }
 
     /// Keep the event frames of an input report.
@@ -288,7 +236,7 @@ impl Device {
         }
         self.release()?;
         if result.is_none() {
-            dlog!("sin respuesta a la consulta {cmd_id:02X}");
+            dlog!("no reply to query {cmd_id:02X}");
         }
         Ok(result)
     }
@@ -379,7 +327,7 @@ impl Device {
     /// Select a preset and confirm it by reading it back.
     pub fn set_preset(&self, preset: EqPreset) -> Result<(), String> {
         let _bus = self.lock()?;
-        dlog!("seleccionar preset {preset:?} ({:02X})", preset.selector());
+        dlog!("select preset {preset:?} ({:02X})", preset.selector());
         for _ in 0..4 {
             self.apply_preset_once(preset)?;
             thread::sleep(Duration::from_millis(100));
@@ -387,7 +335,7 @@ impl Device {
                 Some(sel) if sel == preset.selector() => return Ok(()),
                 Some(sel) => {
                     // landed on the other family's preset: retry
-                    dlog!("el headset quedó en {sel:02X}, reintentando");
+                    dlog!("the headset landed on {sel:02X}, retrying");
                     continue;
                 }
                 None => {
@@ -396,8 +344,8 @@ impl Device {
                 }
             }
         }
-        dlog!("el headset no confirmó el preset {preset:?}");
-        Err(format!("El headset no confirmó el preset {}", preset.label()))
+        dlog!("the headset did not confirm preset {preset:?}");
+        Err(format!("The headset did not confirm the {} preset", preset.label()))
     }
 
     /// Write a curve into a preset's slot (Custom or esports) and make it
@@ -409,7 +357,7 @@ impl Device {
     /// re-apply after the write is what makes the new curve audible.
     pub fn set_slot_curve(&self, preset: EqPreset, bands: &[i8; EQ_BANDS]) -> Result<(), String> {
         let _bus = self.lock()?;
-        dlog!("escribir curva {bands:?} en {preset:?}");
+        dlog!("write curve {bands:?} into {preset:?}");
         if self.get_preset() != Some(preset) {
             self.set_preset(preset)?;
         }
@@ -440,83 +388,28 @@ impl Device {
         } else {
             None
         };
-        match (self.opts.get().method, curve) {
-            (EqMethod::Original, curve) => self.set_eq_original(preset, curve.as_ref()),
-            (EqMethod::Verified, Some(curve)) => self.set_slot_curve(preset, &curve),
-            (EqMethod::Relatch, Some(curve)) => self.set_curve_relatched(preset, &curve),
-            (_, None) => self.set_preset(preset),
+        match curve {
+            Some(curve) => self.set_slot_curve(preset, &curve),
+            None => self.set_preset(preset),
         }
-    }
-
-    /// Write a curve, then leave the preset and come back to it. On the
-    /// user's headset a curve written into the active preset is stored
-    /// (read-back matches) but not heard; entering the preset from another
-    /// one may be what loads it into the audio path.
-    pub fn set_curve_relatched(&self, preset: EqPreset, bands: &[i8; EQ_BANDS]) -> Result<(), String> {
-        let _bus = self.lock()?;
-        self.set_slot_curve(preset, bands)?;
-        // Stay in the same family so the switch back isn't a cross-family one.
-        let via = match preset {
-            EqPreset::ApexLegends => EqPreset::Csgo,
-            p if p.is_esports() => EqPreset::ApexLegends,
-            EqPreset::Game => EqPreset::Music,
-            _ => EqPreset::Game,
-        };
-        dlog!("ir a {via:?} y volver a {preset:?}");
-        self.set_preset(via)?;
-        thread::sleep(Duration::from_millis(150));
-        self.set_preset(preset)
-    }
-
-    /// The first rzr release's apply sequence, extended to every preset:
-    /// remote off, dongle query, remote on, 0x9E, then (select, family
-    /// flag, curve) twice, 300 ms apart. Replies are drained after each
-    /// frame and the headset is left in remote mode.
-    pub fn set_eq_original(&self, preset: EqPreset, curve: Option<&[i8; EQ_BANDS]>) -> Result<(), String> {
-        let _bus = self.lock()?;
-        dlog!("EQ (método original): {preset:?} curva {curve:?}");
-        self.drain();
-        let step = |pkt: &Packet| -> Result<(), String> {
-            self.send(pkt)?;
-            self.drain_quiet(50);
-            Ok(())
-        };
-        step(&proto::set_remote_mode(false))?;
-        step(&proto::get_dongle_firmware())?;
-        step(&proto::set_remote_mode(true))?;
-        step(&proto::set_value(proto::CMD_PRESET_EQ_STATUS, self.opts.get().eq_status))?;
-        for round in 0..2 {
-            if round == 1 {
-                thread::sleep(Duration::from_millis(300));
-            }
-            step(&proto::set_remote_mode(true))?;
-            step(&proto::set_preset(preset))?;
-            step(&proto::set_remote_mode(true))?;
-            step(&proto::set_mode_flag(preset))?;
-            if let Some(curve) = curve {
-                step(&proto::set_remote_mode(true))?;
-                step(&proto::set_eq_bands(curve))?;
-            }
-        }
-        Ok(())
     }
 
     /// Single-byte setting: wake, remote on, value, remote off.
     fn write_value(&self, cmd_id: u8, value: u8) -> Result<(), String> {
         let _bus = self.lock()?;
-        dlog!("escribir {cmd_id:02X} = {value}");
+        dlog!("write {cmd_id:02X} = {value}");
         self.remote(true)?;
         self.remote(true)?;
         self.send(&proto::set_value(cmd_id, value))?;
         self.release()
     }
 
-    /// What the headset reports for its EQ state, for the guided test and
-    /// the debug log.
+    /// What the headset reports for its EQ state, for the debug log and the
+    /// diagnostics.
     pub fn eq_readback(&self) -> String {
         let fmt = |r: Result<Option<Vec<u8>>, String>| match r {
             Ok(Some(v)) => v.iter().map(|b| (*b as i8).to_string()).collect::<Vec<_>>().join(" "),
-            Ok(None) => "sin respuesta".to_string(),
+            Ok(None) => "no reply".to_string(),
             Err(e) => e,
         };
         let preset = match self.query_u8(proto::CMD_PRESET_GET) {
@@ -524,15 +417,15 @@ impl Device {
                 Some(p) => format!("{} ({sel:02X})", p.label()),
                 None => format!("{sel:02X}"),
             },
-            Ok(None) => "sin respuesta".to_string(),
+            Ok(None) => "no reply".to_string(),
             Err(e) => e,
         };
         let text = format!(
-            "preset: {preset} · curva: [{}] · 0x1E: {}",
+            "preset: {preset} · curve: [{}] · 0x1E: {}",
             fmt(self.query(proto::CMD_EQ_GET)),
             fmt(self.query(proto::CMD_PREP)),
         );
-        dlog!("lectura del headset: {text}");
+        dlog!("headset reads: {text}");
         text
     }
 
@@ -576,17 +469,13 @@ impl Device {
     /// Apply the full profile to the headset.
     pub fn apply_profile(&self, profile: &Profile) -> Result<(), String> {
         let _bus = self.lock()?;
-        let opts = self.opts.get();
-        dlog!("aplicar perfil «{}»: {profile:?}", profile.name);
-        // The original sequence carries its own startup frames.
-        if opts.synapse_init && opts.method == EqMethod::Verified {
-            // Synapse's startup: query the dongle, then clear "Speaker Preset
-            // EQ Status" (0x9E). OpenRazer found no audible effect from 0x9E;
-            // it's sent for parity with Synapse (and with earlier rzr releases,
-            // which sent the same bytes).
-            let _ = self.get_dongle_firmware();
-            self.write_value(proto::CMD_PRESET_EQ_STATUS, opts.eq_status)?;
-        }
+        dlog!("apply profile \"{}\": {profile:?}", profile.name);
+        // Synapse's startup: query the dongle, then clear "Speaker Preset EQ
+        // Status" (0x9E). OpenRazer found no audible effect from 0x9E; it's
+        // sent for parity with Synapse (and with earlier rzr releases, which
+        // sent the same bytes).
+        let _ = self.get_dongle_firmware();
+        self.write_value(proto::CMD_PRESET_EQ_STATUS, 0)?;
         self.set_eq(profile.active_preset(), &profile.custom_eq)?;
         self.set_sidetone(profile.sidetone_wire())?;
         self.set_dnd(profile.dnd)?;
@@ -606,9 +495,9 @@ fn log_hid_devices(api: &HidApi) {
     if LOGGED.with(|l| l.replace(true)) {
         return;
     }
-    for info in api.device_list().filter(|i| i.vendor_id() == VID) {
+    for info in api.device_list().filter(|i| i.vendor_id() == RAZER_VID) {
         dlog!(
-            "HID {:04X}:{:04X} interfaz {} usage {:04X}:{:04X} «{}» {:?}",
+            "HID {:04X}:{:04X} interface {} usage {:04X}:{:04X} \"{}\" {:?}",
             info.vendor_id(),
             info.product_id(),
             info.interface_number(),

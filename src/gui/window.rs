@@ -17,7 +17,8 @@ use super::{assets, App, Msg};
 use crate::dlog;
 use crate::worker::Notify;
 
-const BG: (u8, u8, u8, u8) = (0x22, 0x22, 0x22, 0xFF);
+/// The page's --ink, so the window never flashes another colour.
+const BG: (u8, u8, u8, u8) = (0x12, 0x15, 0x18, 0xFF);
 /// Show the window even if the page never says it's ready.
 const SHOW_ANYWAY: Duration = Duration::from_secs(3);
 
@@ -42,7 +43,7 @@ pub fn run(demo: bool) -> Result<(), String> {
     });
 
     let window = WindowBuilder::new()
-        .with_title("rzr — Razer BlackShark V2 Pro")
+        .with_title("rzr")
         .with_inner_size(LogicalSize::new(1140.0, 860.0))
         .with_min_inner_size(LogicalSize::new(940.0, 640.0))
         .with_window_icon(Icon::from_rgba(app_icon(), ICON_SIZE, ICON_SIZE).ok())
@@ -81,7 +82,7 @@ pub fn run(demo: bool) -> Result<(), String> {
         builder.build_gtk(vbox)
     };
     let webview = webview.map_err(|e| e.to_string())?;
-    dlog!("ventana: webview {}", wry::webview_version().unwrap_or_default());
+    dlog!("window: webview {}", wry::webview_version().unwrap_or_default());
 
     let mut app = App::new(demo, notify);
     let mut loaded = false;
@@ -98,7 +99,7 @@ pub fn run(demo: bool) -> Result<(), String> {
                     }
                     app.handle(msg);
                 }
-                Err(e) => dlog!("mensaje de la página no válido ({e}): {text}"),
+                Err(e) => dlog!("invalid message from the page ({e}): {text}"),
             },
             Event::WindowEvent { event: WindowEvent::CloseRequested, .. } => {
                 app.shutdown();
@@ -113,7 +114,7 @@ pub fn run(demo: bool) -> Result<(), String> {
             app.tick(now);
         }
         if !loaded && now >= show_by && !window.is_visible() {
-            dlog!("la página no respondió; se muestra la ventana igualmente");
+            dlog!("the page did not answer; showing the window anyway");
             window.set_visible(true);
         }
         // Until the page is ready its functions don't exist yet; it asks for
@@ -150,7 +151,7 @@ fn webview_data_dir() -> Option<std::path::PathBuf> {
 
 const ICON_SIZE: u32 = 64;
 
-/// Window icon: the green ring logo, drawn procedurally.
+/// Window icon: a mint ring on graphite, drawn procedurally.
 fn app_icon() -> Vec<u8> {
     const N: u32 = ICON_SIZE;
     let mut rgba = Vec::with_capacity((N * N * 4) as usize);
@@ -161,9 +162,9 @@ fn app_icon() -> Vec<u8> {
             let (r, g, b, a) = if d > 0.97 {
                 (0, 0, 0, 0)
             } else if d > 0.6 || d < 0.28 {
-                (0x44, 0xD6, 0x2C, 255)
+                (0x3F, 0xD9, 0x8A, 255)
             } else {
-                (0x0B, 0x0B, 0x0B, 255)
+                (0x12, 0x15, 0x18, 255)
             };
             rgba.extend_from_slice(&[r, g, b, a]);
         }

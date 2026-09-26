@@ -6,7 +6,7 @@
 
 let S = null; // latest state from rzr
 let tab = "sound";
-let dialog = null; // "rename" | "delete" | null (the guided test comes from S.wizard)
+let dialog = null; // "rename" | "delete" | null
 
 const $ = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
@@ -29,7 +29,7 @@ function test(expr) {
 }
 
 function display(v) {
-  if (v === true) return "Sí";
+  if (v === true) return "Yes";
   if (v === false) return "No";
   return v == null || v === "" ? "—" : String(v);
 }
@@ -80,6 +80,8 @@ function render() {
   renderDialog();
 }
 
+const TABS = ["sound", "enhancement", "mic", "power", "settings"];
+
 function renderTabs() {
   for (const b of $$("[data-tab]")) b.setAttribute("aria-selected", b.dataset.tab === tab ? "true" : "false");
   for (const p of $$("[data-page]")) p.hidden = p.dataset.page !== tab;
@@ -89,7 +91,9 @@ function renderTabs() {
 }
 
 function setTab(name) {
+  if (!TABS.includes(name)) return;
   tab = name;
+  $("main").scrollTop = 0;
   try { localStorage.setItem("rzr.tab", name); } catch (_) {}
   renderTabs();
 }
@@ -116,7 +120,7 @@ function renderBattery() {
   $(".battery-fill", mini).style.width = `${d.battery ?? 0}%`;
   mini.classList.toggle("charging", d.charging === true);
   mini.classList.toggle("low", d.battery != null && d.battery <= 15);
-  $(".headset").classList.toggle("lit", d.headset);
+  mini.hidden = d.battery == null;
 }
 
 function renderAudio() {
@@ -129,14 +133,14 @@ function renderAudio() {
     // Shows Windows' current default; picking one switches it once.
     const current = S.audio[list].find((d) => d.default);
     const options = S.audio[list].map((d) => [d.id, d.name]);
-    if (!current) options.unshift(["", "(ninguno)"]);
+    if (!current) options.unshift(["", "(none)"]);
     fillSelect($(`[data-devices="${flow}"]`), options, current ? current.id : "");
   }
   const m = S.device.mic_muted;
   const state = $("#mic-state");
   state.setAttribute("data-level", m === true ? "error" : m === false ? "ok" : "");
   state.lastElementChild.textContent =
-    m === true ? "SILENCIADO con el botón del headset" : m === false ? "Activo (botón del headset)" : "Estado del botón de silencio desconocido";
+    m === true ? "Muted with the headset's button" : m === false ? "On (headset's mute button)" : "Mute button state unknown";
 }
 
 /** THX switches and levels only work while its service answers and no change is pending. */
@@ -150,7 +154,7 @@ function renderPower() {
   const d = S.device;
   $("#battery-percent").textContent = d.battery == null ? "—" : `${d.battery}%`;
   const state = $("#battery-state");
-  const [text, level] = !d.headset ? ["Headset no conectado", ""] : d.charging ? ["⚡ Cargando", "ok"] : ["Con batería", ""];
+  const [text, level] = !d.headset ? ["Headset not connected", ""] : d.charging ? ["⚡ Charging", "ok"] : ["On battery", ""];
   state.textContent = text;
   state.setAttribute("data-level", level);
   const meter = $("#battery-meter");
@@ -160,29 +164,36 @@ function renderPower() {
 
   const n = S.connlog.drops_today;
   const drops = $("#drops");
-  drops.textContent = n === 0 ? "Sin caídas hoy" : n === 1 ? "1 caída hoy" : `${n} caídas hoy`;
+  drops.textContent = n === 0 ? "No drops today" : n === 1 ? "1 drop today" : `${n} drops today`;
   drops.setAttribute("data-level", n === 0 ? "ok" : "warn");
   const lines = S.connlog.lines;
   $("#connlog").innerHTML = lines.length
     ? lines
-        .map((l) => `<span class="${l.includes("DESCONECTADO") ? "down" : l.includes("RECONECTADO") ? "up" : ""}">${esc(l)}</span>`)
+        .map((l) => `<span class="${l.includes("DISCONNECTED") ? "down" : l.includes("RECONNECTED") ? "up" : ""}">${esc(l)}</span>`)
         .join("\n")
-    : "Todavía no hay registros.";
+    : "Nothing logged yet.";
 }
 
 function renderSettings() {
-  $("#eq-method").value = S.settings.eq_method;
-  setChecked($("#release-remote"), S.settings.release_remote);
-  setChecked($("#legacy-config"), S.settings.send_legacy_config);
-}
+  const box = $("#models");
+  const key = JSON.stringify(S.model.options);
+  if (box.dataset.key !== key) {
+    box.dataset.key = key;
+    box.innerHTML = S.model.options
+      .map(
+        (m) => `<button class="model" role="radio" data-model="${esc(m.id)}">
+          <span class="model-name">${esc(m.name)}</span>
+          <span class="tag${m.supported ? " ok" : ""}">${m.supported ? "Supported" : "Diagnostics only"}</span>
+          <span class="model-hint">${esc(m.hint)}</span>
+        </button>`,
+      )
+      .join("");
+  }
+  for (const b of $$("[data-model]", box)) b.setAttribute("aria-checked", b.dataset.model === S.model.id ? "true" : "false");
 
-function sendAdvanced(change) {
-  send("advanced", {
-    eq_method: S.settings.eq_method,
-    release_remote: S.settings.release_remote,
-    send_legacy_config: S.settings.send_legacy_config,
-    ...change,
-  });
+  const d = S.diag;
+  $("#diag-run").disabled = d.running;
+  $("#diag-summary").innerHTML = (d.summary || []).map((l) => `<li>${esc(l)}</li>`).join("");
 }
 
 // ------------------------------------------------------------------ sliders
@@ -234,12 +245,12 @@ function setSlider(el, value, enabled) {
 // ----------------------------------------------------------------- equalizer
 
 const REGIONS = [
-  [0, 0, "SUBGRAVES"],
-  [1, 2, "GRAVES"],
-  [3, 3, "MED. BAJOS"],
-  [4, 5, "MEDIOS"],
-  [6, 7, "MED. ALTOS"],
-  [8, 9, "AGUDOS"],
+  [0, 0, "Sub-bass"],
+  [1, 2, "Bass"],
+  [3, 3, "Low mids"],
+  [4, 5, "Mids"],
+  [6, 7, "High mids"],
+  [8, 9, "Treble"],
 ];
 
 /** EQ graphs by name, made in setup(): the headset's and the microphone's. */
@@ -368,9 +379,13 @@ function drawGraph(g) {
   const y = (db) => plot.t + ((max - Math.max(min, Math.min(max, db))) / (max - min)) * (plot.b - plot.t);
   const lit = g.drag ?? g.hover;
 
-  let svg = "";
+  // The signature: the curve's area, fading from the accent to nothing at 0 dB.
+  const id = `fill-${box.id}`;
+  let svg = `<defs><linearGradient id="${id}" x1="0" y1="${plot.t}" x2="0" y2="${plot.b}" gradientUnits="userSpaceOnUse">
+    <stop offset="0" class="fill-top"/><stop offset="${(y(0) - plot.t) / (plot.b - plot.t)}" class="fill-mid"/><stop offset="1" class="fill-top"/>
+  </linearGradient></defs>`;
   for (const db of [max, 0, min]) {
-    svg += `<text class="scale" x="${plot.r + 22}" y="${y(db)}">${db > 0 ? "+" : ""}${db}dB</text>`;
+    svg += `<text class="scale" x="${plot.r + 22}" y="${y(db)}">${db > 0 ? "+" : ""}${db} dB</text>`;
   }
   for (let i = 0; i < n; i++) {
     const on = lit === i ? " lit" : "";
@@ -379,6 +394,8 @@ function drawGraph(g) {
     svg += `<text class="freq${on}" x="${x(i)}" y="${plot.b + 18}">${freqs[i]}</text>`;
   }
   const points = g.bands.map((db, i) => `${x(i)},${y(db)}`).join(" ");
+  svg += `<polygon class="area" fill="url(#${id})" points="${x(0)},${y(0)} ${points} ${x(n - 1)},${y(0)}"/>`;
+  svg += `<line class="zero-line" x1="${plot.l}" x2="${plot.r}" y1="${y(0)}" y2="${y(0)}"/>`;
   svg += `<polyline class="curve" points="${points}"/>`;
   g.bands.forEach((db, i) => {
     svg += `<circle class="node" cx="${x(i)}" cy="${y(db)}" r="${g.drag === i ? 9 : g.editable ? 7 : 6}"/>`;
@@ -386,16 +403,16 @@ function drawGraph(g) {
   if (lit !== null && lit !== undefined) {
     const v = g.bands[lit];
     const label = `${v > 0 ? "+" : ""}${v} dB`;
-    const bw = label.length * 6.5 + 10;
+    const bw = label.length * 7 + 12;
     const cy = y(v) - 22;
-    svg += `<g class="bubble"><rect x="${x(lit) - bw / 2}" y="${cy - 9}" width="${bw}" height="18" rx="2"/><text x="${x(lit)}" y="${cy}">${label}</text></g>`;
+    svg += `<g class="bubble"><rect x="${x(lit) - bw / 2}" y="${cy - 10}" width="${bw}" height="20" rx="5"/><text x="${x(lit)}" y="${cy}">${label}</text></g>`;
   }
   const barTop = plot.b + 36;
   for (const [a, b, label] of REGIONS) {
     const on = lit != null && lit >= a && lit <= b ? " lit" : "";
     const left = x(a) - dx / 2 + 1;
     const width = x(b) + dx / 2 - 1 - left;
-    svg += `<g class="region${on}"><rect x="${left}" y="${barTop}" width="${width}" height="24"/><text x="${left + width / 2}" y="${barTop + 12}">${label}</text></g>`;
+    svg += `<g class="region${on}"><rect x="${left}" y="${barTop}" width="${width}" height="24" rx="5"/><text x="${left + width / 2}" y="${barTop + 12}">${label}</text></g>`;
   }
   box.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">${svg}</svg>`;
 }
@@ -414,61 +431,28 @@ function setupGraphs() {
 function renderDialog() {
   const modal = $("#dialog");
   const box = $(".dialog", modal);
-  const kind = S.wizard ? "wizard" : dialog;
+  const kind = dialog;
   modal.hidden = !kind;
   if (!kind) {
     box.dataset.kind = "";
     return;
   }
-  if (kind === "wizard") {
-    box.className = "dialog";
-    box.innerHTML = wizardHtml(S.wizard);
-  } else if (box.dataset.kind !== kind) {
+  if (box.dataset.kind !== kind) {
     // Local dialogs are built once, so typing isn't interrupted.
     box.className = "dialog small";
     if (kind === "rename") {
-      box.innerHTML = `<h2>RENOMBRAR PERFIL</h2>
+      box.innerHTML = `<h2>Rename profile</h2>
         <input type="text" id="rename-input" maxlength="60" value="${esc(S.profile.name)}">
-        <div class="actions"><button class="button primary" data-action="rename">Guardar</button><button class="button" data-action="close">Cancelar</button></div>`;
+        <div class="actions"><button class="button primary" data-action="rename">Rename</button><button class="button" data-action="close">Cancel</button></div>`;
       const input = $("#rename-input");
       input.focus();
       input.select();
     } else {
-      box.innerHTML = `<h2>ELIMINAR PERFIL</h2><p>¿Eliminar «${esc(S.profile.name)}»?</p>
-        <div class="actions"><button class="button primary" data-action="delete">Eliminar</button><button class="button" data-action="close">Cancelar</button></div>`;
+      box.innerHTML = `<h2>Delete profile</h2><p>Delete “${esc(S.profile.name)}”? This can't be undone.</p>
+        <div class="actions"><button class="button danger" data-action="delete">Delete</button><button class="button" data-action="close">Cancel</button></div>`;
     }
   }
   box.dataset.kind = kind;
-}
-
-function wizardHtml(w) {
-  let html = `<h2>PRUEBA GUIADA DEL ECUALIZADOR</h2>`;
-  if (w.stage === "intro") {
-    html += `<p class="dim">${esc(w.text)}</p><ul class="steps">${w.steps.map((s) => `<li>${esc(s)}</li>`).join("")}</ul>
-      <div class="actions"><button class="button primary" data-send="wizard_start">Empezar</button><button class="button" data-send="wizard_cancel">Cancelar</button></div>`;
-  } else if (w.stage === "test") {
-    const off = !w.connected || w.waiting ? " disabled" : "";
-    html += `<h3>${esc(w.title)}</h3><p class="dim">${esc(w.explain)}</p><div class="ab">`;
-    w.buttons.forEach((b, k) => {
-      html += `<button data-press="${k}" aria-pressed="${b.playing}"${off}>${esc(b.label)}</button>`;
-    });
-    html += `${w.waiting ? '<span class="spinner"></span>' : ""}</div>`;
-    if (!w.connected) html += `<p style="color: var(--warn)">El headset no está conectado: enciéndelo para seguir.</p>`;
-    if (w.readback) html += `<p class="mono faint">${esc(w.readback)}</p>`;
-    if (!w.ready) html += `<p class="faint">Prueba A y B al menos una vez cada una para poder responder.</p>`;
-    const dis = w.ready ? "" : " disabled";
-    html += `<div class="actions">
-      <button class="button" data-answer="true"${dis}>Sí, el sonido cambia</button>
-      <button class="button" data-answer="false"${dis}>No, suena igual</button>
-      <span class="spacer"></span><button class="button" data-send="wizard_cancel">Cancelar prueba</button></div>`;
-  } else {
-    html += w.lines.map((l) => `<p>${esc(l)}</p>`).join("");
-    html += `<p class="verdict" data-level="${w.ok ? "ok" : "warn"}">${esc(w.verdict)}</p>`;
-    html += `<p class="faint">Al cerrar se vuelve a aplicar tu perfil. El detalle quedó en debug.log.</p>
-      <div class="actions"><button class="button primary" data-send="wizard_finish">Terminar</button>
-      <button class="link external" data-open="logdir">Abrir carpeta de registros</button></div>`;
-  }
-  return html;
 }
 
 function openDialog(kind) {
@@ -501,7 +485,7 @@ function toast(text, error = false) {
 async function importFiles(files) {
   for (const file of files) {
     if (!file.name.toLowerCase().endsWith(".synapse4")) {
-      toast(`${file.name} no es un perfil de Synapse (.synapse4)`, true);
+      toast(`${file.name} isn't a Synapse profile (.synapse4)`, true);
       continue;
     }
     send("import", { name: file.name, text: await file.text() });
@@ -524,16 +508,14 @@ function onClick(e) {
     else if (t.id === "out-mute" || t.id === "in-mute") {
       const ep = S.audio[t.id.slice(0, -5)];
       if (ep) send("mute", { id: ep.id, muted: !on });
-    } else if (t.id === "release-remote") sendAdvanced({ release_remote: on });
-    else if (t.id === "legacy-config") sendAdvanced({ send_legacy_config: on });
+    }
     return;
   }
   if (d.tab) return setTab(d.tab);
   if (d.mode) return d.mode !== S.profile.eq_mode && send("eq_mode", { mode: d.mode });
   if (d.preset) return d.preset !== S.profile.preset && send("preset", { preset: d.preset });
   if (d.micPreset) return d.micPreset !== S.mic.eq_preset && send("mic_eq_preset", { preset: d.micPreset });
-  if (d.press) return send("wizard_press", { k: Number(d.press) });
-  if (d.answer) return send("wizard_answer", { heard: d.answer === "true" });
+  if (d.model) return d.model !== S.model.id && send("headset_model", { model: d.model });
   if (t.id === "profile-menu-button") {
     $("#profile-menu").hidden = !$("#profile-menu").hidden;
     return;
@@ -561,6 +543,10 @@ function onClick(e) {
 
 function setup() {
   try { tab = localStorage.getItem("rzr.tab") || tab; } catch (_) {}
+  const hash = location.hash.slice(1);
+  if (TABS.includes(hash)) tab = hash;
+  if (!TABS.includes(tab)) tab = "sound";
+  window.addEventListener("hashchange", () => setTab(location.hash.slice(1)));
   for (const el of $$(".slider")) makeSlider(el);
   setupGraphs();
 
@@ -579,7 +565,6 @@ function setup() {
   });
 
   $("#profile").addEventListener("change", (e) => send("select_profile", { index: Number(e.target.value) }));
-  $("#eq-method").addEventListener("change", (e) => sendAdvanced({ eq_method: e.target.value }));
   for (const sel of $$("[data-devices]")) {
     sel.addEventListener("change", () => send("default_device", { id: sel.value }));
   }
@@ -619,7 +604,7 @@ function loadDemo() {
     const s = document.createElement("script");
     s.src = "demo.js";
     s.onload = resolve;
-    s.onerror = () => (document.body.textContent = "Falta demo.js: abre esta página con rzr.");
+    s.onerror = () => (document.body.textContent = "demo.js is missing: open this page with rzr.");
     document.head.append(s);
   });
 }

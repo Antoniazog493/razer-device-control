@@ -2,8 +2,8 @@
 //!
 //! When enabled it records every HID frame sent to and received from the
 //! dongle, plus what the app was doing at the time, so a problem on the
-//! user's machine can be diagnosed from the file alone. Turned on from
-//! AJUSTES, with `--debug`, or with the RZR_DEBUG environment variable.
+//! user's machine can be diagnosed from the file alone. Turned on in
+//! Settings, with `--debug`, or with the RZR_DEBUG environment variable.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -26,7 +26,7 @@ pub fn path() -> PathBuf {
     Config::path().with_file_name("debug.log")
 }
 
-/// Name this process in each line ("panel", "segundo plano"...), and honour
+/// Name this process in each line ("panel", "background"...), and honour
 /// `--debug` / RZR_DEBUG.
 pub fn init(source: &'static str, forced: bool) {
     let _ = SOURCE.set(source);
@@ -44,7 +44,7 @@ pub fn set_enabled(on: bool) {
     let on = on || FORCED.load(Ordering::Relaxed);
     if ENABLED.swap(on, Ordering::Relaxed) != on && on {
         write(&format!(
-            "=== registro activado: rzr {} ({}, {}) ===",
+            "=== debug log on: rzr {} ({}, {}) ===",
             env!("CARGO_PKG_VERSION"),
             std::env::consts::OS,
             std::env::consts::ARCH

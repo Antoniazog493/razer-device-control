@@ -16,8 +16,8 @@
     valorant: [0, 0, 0, 0, 0, 1, 4, 4, 4, -3],
   };
   const labels = {
-    game: "JUEGO", movie: "PELÍCULA", music: "MÚSICA", custom: "PERSONALIZADO",
-    apex_legends: "APEX LEGENDS", call_of_duty: "CALL OF DUTY", csgo: "CS2", fortnite: "FORTNITE", valorant: "VALORANT",
+    game: "Game", movie: "Movie", music: "Music", custom: "Custom",
+    apex_legends: "Apex Legends", call_of_duty: "Call of Duty", csgo: "CS2", fortnite: "Fortnite", valorant: "Valorant",
   };
   const list = (ids) => ids.map((id) => ({ id, label: labels[id] }));
   const standard = ["game", "movie", "music", "custom"];
@@ -30,19 +30,26 @@
   };
   let micCustom = [6, 0, 0, 0, 0, 12, 0, 0, 0, -12];
   const selected = { standard: "custom", esports: "apex_legends" };
+  const models = [
+    { id: "blackshark_v2_pro_2023", name: "Razer BlackShark V2 Pro (2023)", hint: "2.4 GHz + Bluetooth, charges over USB-C · dongle 1532:0555", supported: true },
+    { id: "blackshark_v2_pro_2020", name: "Razer BlackShark V2 Pro (2020)", hint: "2.4 GHz only, charges over micro-USB · dongle 1532:0528", supported: false },
+    { id: "other", name: "Other Razer headset", hint: "Not listed here · diagnostics look at every Razer device", supported: false },
+  ];
 
   const S = {
     demo: true,
     version: "demo",
     device: {
       product: "Razer BlackShark V2 Pro 2.4", dongle: true, headset: true, busy: false,
-      text: "Conectado", level: "ok", battery: 76, charging: false, mic_muted: false,
-      firmware: "1.3.0.8", dongle_firmware: "2.4.1.0", serial: "PM2239H12345678", preset: "PERSONALIZADO",
+      text: "Connected", level: "ok", battery: 76, charging: false, mic_muted: false,
+      firmware: "v1.3", dongle_firmware: "2.4.1.0", serial: "DEMO000000000", preset: "Custom",
     },
-    profiles: ["Predeterminado", "Música"],
+    model: { id: models[0].id, name: models[0].name, supported: true, options: models },
+    diag: { running: false, step: "", summary: null, file: null, error: null },
+    profiles: ["Default", "Music"],
     active: 0,
     profile: {
-      name: "Predeterminado", eq_mode: "standard", preset: "custom", editable: true, has_curve: false,
+      name: "Default", eq_mode: "standard", preset: "custom", editable: true, has_curve: false,
       curve: custom, sidetone_enabled: false, sidetone_volume: 50, dnd: false,
       auto_off_enabled: true, auto_off_minutes: 30,
     },
@@ -50,29 +57,28 @@
     eq: { freqs: ["31Hz", "63Hz", "125Hz", "250Hz", "500Hz", "1kHz", "2kHz", "4kHz", "8kHz", "16kHz"], min: -5, max: 5 },
     auto_off_range: [15, 60],
     audio: {
-      out: { id: "out", name: "Auriculares (Razer BlackShark V2 Pro 2.4)", volume: 80, muted: false },
-      in: { id: "in", name: "Micrófono (Razer BlackShark V2 Pro 2.4)", volume: 100, muted: false },
+      out: { id: "out", name: "Headphones (Razer BlackShark V2 Pro 2.4)", volume: 80, muted: false },
+      in: { id: "in", name: "Microphone (Razer BlackShark V2 Pro 2.4)", volume: 100, muted: false },
       outputs: [
-        { id: "out", name: "Auriculares (Razer BlackShark V2 Pro 2.4)", default: true },
-        { id: "spk", name: "Altavoces (Realtek(R) Audio)", default: false },
+        { id: "out", name: "Headphones (Razer BlackShark V2 Pro 2.4)", default: true },
+        { id: "spk", name: "Speakers (Realtek(R) Audio)", default: false },
       ],
-      inputs: [{ id: "in", name: "Micrófono (Razer BlackShark V2 Pro 2.4)", default: true }],
+      inputs: [{ id: "in", name: "Microphone (Razer BlackShark V2 Pro 2.4)", default: true }],
     },
     settings: {
-      autostart: true, debug_log: false, eq_method: "verified", release_remote: true,
-      send_legacy_config: true, eq_status: 0, config_path: "C:\\Users\\tu\\AppData\\Roaming\\rzr\\config.json",
+      autostart: true, debug_log: false, config_path: "C:\\Users\\you\\AppData\\Roaming\\rzr\\config.json",
     },
     thx: {
-      service: true, writable: true, busy: false, preset: "Música",
+      service: true, writable: true, busy: false, preset: "Music",
       spatial: false, bass_boost: true, bass_boost_level: 50,
       normalization: false, normalization_level: 100, voice_clarity: false, voice_clarity_level: 100,
     },
     mic: {
       eq_preset: "default",
       presets: [
-        { id: "default", label: "PREDETERMINADO" }, { id: "mic_boost", label: "REFUERZO DE MICRÓFONO" },
-        { id: "broadcast", label: "TRANSMISIÓN" }, { id: "conference", label: "CONFERENCIA" },
-        { id: "custom", label: "PERSONALIZADO" },
+        { id: "default", label: "Default" }, { id: "mic_boost", label: "Mic Boost" },
+        { id: "broadcast", label: "Broadcast" }, { id: "conference", label: "Conference" },
+        { id: "custom", label: "Custom" },
       ],
       editable: false, curve: micCurves.default, min: -12, max: 12,
       effects: {
@@ -86,11 +92,10 @@
     connlog: {
       drops_today: 1,
       lines: [
-        "2026-09-26 09:14:03  DESCONECTADO  (aviso del headset)",
-        "2026-09-26 09:14:07  RECONECTADO tras 4 s  (aviso del headset)",
+        "2026-09-26 09:14:07.412  Headset RECONNECTED after 4.1 s  [headset event, panel]",
+        "2026-09-26 09:14:03.305  Headset DISCONNECTED  [headset event, panel]",
       ],
     },
-    wizard: null,
   };
 
   function refreshEq() {
@@ -101,7 +106,7 @@
     p.curve = p.editable ? custom : curves[p.preset];
     S.device.preset = labels[p.preset];
     // Like rzr with THX installed: the headset preset also picks THX's.
-    S.thx.preset = { game: "Juego", movie: "Película", music: "Música" }[p.preset] || "Personalizado";
+    S.thx.preset = { game: "Game", movie: "Movie", music: "Music" }[p.preset] || "Custom";
   }
 
   function refreshMic() {
@@ -123,7 +128,7 @@
     eq_copy_to_custom() { custom = [...S.profile.curve]; selected.standard = "custom"; S.profile.eq_mode = "standard"; refreshEq(); },
     select_profile({ index }) { S.active = index; S.profile.name = S.profiles[index]; },
     rename_profile({ name }) { S.profiles[S.active] = S.profile.name = name.trim() || S.profile.name; },
-    new_profile() { S.profiles.push("Perfil nuevo"); S.active = S.profiles.length - 1; S.profile.name = "Perfil nuevo"; },
+    new_profile() { S.profiles.push("New profile"); S.active = S.profiles.length - 1; S.profile.name = "New profile"; },
     delete_profile() { S.profiles.splice(S.active, 1); S.active = 0; S.profile.name = S.profiles[0]; },
     dnd({ on }) { S.profile.dnd = on; },
     sidetone({ on }) { S.profile.sidetone_enabled = on; },
@@ -151,28 +156,26 @@
     },
     autostart({ on }) { S.settings.autostart = on; },
     debug_log({ on }) { S.settings.debug_log = on; },
-    advanced(a) { Object.assign(S.settings, a); delete S.settings.cmd; },
-    wizard_open() { S.wizard = { stage: "intro", text: "Demo de la prueba guiada.", steps: ["Pon música.", "Pulsa A y B.", "Responde."] }; },
-    wizard_start() {
-      S.wizard = {
-        stage: "test", title: "1 · Personalizado, cambiando de preset y volviendo",
-        explain: "Escribe la curva de graves (A) o de agudos (B) en PERSONALIZADO.",
-        buttons: [{ label: "A · GRAVES", playing: false, tried: false }, { label: "B · AGUDOS", playing: false, tried: false }],
-        waiting: false, connected: true, readback: null, ready: false,
-      };
+    headset_model({ model }) {
+      const m = models.find((x) => x.id === model);
+      S.model = { ...S.model, id: m.id, name: m.name, supported: m.supported };
+      S.device.text = m.supported ? "Connected" : "Model not supported yet";
+      S.device.level = m.supported ? "ok" : "warn";
     },
-    wizard_press({ k }) {
-      const w = S.wizard;
-      w.buttons.forEach((b, i) => (b.playing = i === k));
-      w.buttons[k].tried = true;
-      w.ready = w.buttons.every((b) => b.tried);
-      w.readback = "preset: FF · curva: [5, 5, 5, 4, 0, -5, -5, -5, -5, -5]";
+    run_diagnostics() {
+      S.diag = { running: true, step: "Looking for Razer devices…", summary: null, file: null, error: null };
+      let left = 3;
+      const tick = setInterval(() => {
+        if (left > 0) {
+          S.diag.step = `Listening for ${left} s: turn the headset off and on, press its buttons, turn its dials… (${3 - left} reports so far)`;
+          left--;
+        } else {
+          clearInterval(tick);
+          S.diag = { running: false, step: "", summary: ["Demo: nothing was read."], file: "rzr-diagnostics-demo.txt", error: null };
+        }
+        rzr.state(JSON.parse(JSON.stringify(S)));
+      }, 1000);
     },
-    wizard_answer() {
-      S.wizard = { stage: "summary", lines: ["Demo terminada"], verdict: "Así se ve el resultado.", ok: true, eq_status: null };
-    },
-    wizard_finish() { S.wizard = null; },
-    wizard_cancel() { S.wizard = null; },
   };
 
   window.ipc = {

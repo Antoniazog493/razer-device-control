@@ -6,9 +6,11 @@ mod config;
 mod connlog;
 mod debuglog;
 mod device;
+mod diagnostics;
 mod gui;
 mod instance;
 mod mic;
+mod models;
 mod protocol;
 mod registry;
 mod synapse;
@@ -49,7 +51,7 @@ fn main() {
     let debug = has(&["--debug"]);
 
     let source = if watch {
-        "segundo plano"
+        "background"
     } else if silent || args.len() > 1 && !has(&["--demo", "--debug"]) {
         "cli"
     } else {
@@ -57,7 +59,7 @@ fn main() {
     };
     debuglog::init(source, debug);
     debuglog::set_enabled(Config::load().debug_log);
-    dlog!("inicio: {:?}", &args[1..]);
+    dlog!("start: {:?}", &args[1..]);
 
     if silent {
         if watch {
@@ -74,9 +76,9 @@ fn main() {
 
     if matches!(cmd, None | Some("config") | Some("gui")) && !watch && !has(&["--help", "-h"]) {
         if let Err(e) = gui::run(has(&["--demo"])) {
-            dlog!("no se pudo abrir la ventana: {e}");
+            dlog!("could not open the window: {e}");
             show_error(&format!(
-                "No se pudo abrir el panel de rzr:\n{e}\n\nEl panel usa Microsoft Edge WebView2. Si falta, instálalo desde https://go.microsoft.com/fwlink/p/?LinkId=2124703\n\nMientras tanto puedes usar «rzr --watch» y «rzr apply»."
+                "Could not open the rzr panel:\n{e}\n\nThe panel needs Microsoft Edge WebView2. If it is missing, install it from https://go.microsoft.com/fwlink/p/?LinkId=2124703\n\nMeanwhile, \"rzr --watch\" and \"rzr apply\" still work."
             ));
             std::process::exit(1);
         }
@@ -93,6 +95,8 @@ fn main() {
         run_apply();
     } else if cmd == Some("import") {
         run_import(positional.get(1).copied());
+    } else if cmd == Some("diagnose") {
+        run_diagnose(&args);
     } else {
         eprintln!("Unknown command: {}", cmd.unwrap_or_default());
         eprintln!("Use 'rzr help' for usage.");
@@ -116,10 +120,10 @@ fn show_error(text: &str) {
 }
 
 fn print_help() {
-    println!("rzr - Razer BlackShark V2 Pro control panel");
+    println!("rzr - Razer BlackShark V2 Pro (2023) control panel");
     println!();
     println!("Controls the headset (EQ, mic monitoring, auto power-off, Do Not");
-    println!("Disturb) over USB HID, replacing Razer Synapse.");
+    println!("Disturb) over USB HID and THX Spatial Audio, replacing Razer Synapse.");
     println!();
     println!("Usage:");
     println!("  rzr                    Open the control panel");
@@ -128,6 +132,9 @@ fn print_help() {
     println!("  rzr --watch            Watch for headset and apply on connect");
     println!("  rzr --silent           Apply silently (no output, for startup)");
     println!("  rzr --silent --watch   Watch silently (best for startup)");
+    println!("  rzr diagnose [MODEL] [--seconds N]");
+    println!("                         Read-only report for a headset model, to send");
+    println!("                         for support. MODEL: {}", model_ids().join(", "));
     println!("  --debug                Also write debug.log (every HID frame)");
     println!("  rzr help               Show this help");
     println!();
@@ -136,13 +143,15 @@ fn print_help() {
 
 fn run_silent() {
     let cfg = Config::load();
+    if !cfg.headset_model.supported() {
+        std::process::exit(1);
+    }
     let dev = match device::Device::open(cfg.wait_timeout_ms) {
         Ok(d) => d,
         Err(_) => std::process::exit(1),
     };
-    dev.set_options(device::Options::from_config(&cfg));
     if let Err(e) = dev.apply_profile(cfg.profile()) {
-        dlog!("error al aplicar: {e}");
+        dlog!("apply failed: {e}");
     }
 }
 
@@ -156,7 +165,7 @@ fn run_watch(silent: bool) {
 
     let poll_interval = Duration::from_secs(5);
     let mut dev: Option<device::Device> = None;
-    let mut log = connlog::ConnLog::new("segundo plano");
+    let mut log = connlog::ConnLog::new("background");
     let mut was_connected = false;
     let mut applied = false;
     // Consecutive failed link checks; one dropped reply isn't a disconnect.
@@ -174,6 +183,12 @@ fn run_watch(silent: bool) {
         // Keep the dongle open so the headset's own link events reach us:
         // they catch drops too short for the periodic check.
         let Some(d) = dev.as_ref() else {
+            // A model rzr doesn't control yet: nothing to do but wait for
+            // the user to pick a supported one in the panel.
+            if !Config::load().headset_model.supported() {
+                thread::sleep(poll_interval);
+                continue;
+            }
             match device::Device::open(0) {
                 Ok(d) => {
                     dev = Some(d);
@@ -181,7 +196,7 @@ fn run_watch(silent: bool) {
                 }
                 Err(_) => {
                     if was_connected {
-                        log.update(false, "dongle no encontrado");
+                        log.update(false, "dongle not found");
                         if !silent {
                             println!("  Dongle not found, waiting...");
                         }
@@ -200,7 +215,7 @@ fn run_watch(silent: bool) {
                     follow_preset(d, &mut thx);
                 }
                 for link in events.iter().filter_map(|e| e.link()) {
-                    log.update(link, "aviso del headset");
+                    log.update(link, "headset event");
                     if link {
                         next_check = Instant::now(); // re-apply right away
                     } else {
@@ -224,15 +239,20 @@ fn run_watch(silent: bool) {
         }
         next_check = Instant::now() + poll_interval;
 
-        // Pick up changes made in the panel (method, debug log).
+        // Pick up changes made in the panel (model, debug log, profile).
         let cfg = Config::load();
         debuglog::set_enabled(cfg.debug_log);
-        d.set_options(device::Options::from_config(&cfg));
+        if !cfg.headset_model.supported() {
+            dev = None;
+            was_connected = false;
+            applied = false;
+            continue;
+        }
         thx.sync_mic(&cfg.profile().mic);
 
         let connected = match d.link_status() {
             Ok(c) => c,
-            // The panel is mid-sequence (or running the guided test).
+            // The panel is mid-sequence.
             Err(e) if e == device::BUSY => continue,
             Err(_) => {
                 dev = None;
@@ -244,7 +264,7 @@ fn run_watch(silent: bool) {
         if was_connected && !connected && misses < 2 {
             continue;
         }
-        log.update(connected, "comprobación periódica");
+        log.update(connected, "periodic check");
 
         if connected && !applied {
             // Headset just connected (or first detection).
@@ -253,7 +273,7 @@ fn run_watch(silent: bool) {
             }
             let result = d.apply_profile(cfg.profile());
             if let Err(e) = &result {
-                dlog!("error al aplicar: {e}");
+                dlog!("apply failed: {e}");
             }
             // Busy = the panel was sending at the same time; retry next check.
             let busy = matches!(&result, Err(e) if e == device::BUSY);
@@ -296,10 +316,10 @@ fn follow_preset(d: &device::Device, thx: &mut ThxSync) {
     if cfg.profile().active_preset() == preset {
         return;
     }
-    dlog!("segundo plano: botón EQ, el headset está en {preset:?}");
+    dlog!("background: EQ button, the headset is on {preset:?}");
     cfg.profile_mut().select_preset(preset);
     if let Err(e) = cfg.save() {
-        dlog!("segundo plano: {e}");
+        dlog!("background: {e}");
     }
     let p = cfg.profile();
     thx.set_eq(&ThxEq::new(p.active_preset(), p.active_curve()));
@@ -323,7 +343,7 @@ impl ThxSync {
     /// service starts with Windows, maybe after us).
     fn service(&mut self) -> Option<&thx::Service> {
         if self.service.as_ref().is_some_and(|s| !s.alive()) {
-            dlog!("segundo plano: se perdió la conexión con el servicio de THX");
+            dlog!("background: lost the connection to the THX service");
             self.service = None;
         }
         if self.service.is_none() {
@@ -336,9 +356,9 @@ impl ThxSync {
     fn set_eq(&mut self, eq: &ThxEq) {
         let Some(service) = self.service() else { return };
         match service.set_eq(eq) {
-            Ok(()) => dlog!("segundo plano: THX {eq:?}"),
+            Ok(()) => dlog!("background: THX {eq:?}"),
             Err(e) => {
-                dlog!("segundo plano: ecualizador de THX: {e}");
+                dlog!("background: THX equalizer: {e}");
                 self.service = None;
             }
         }
@@ -351,11 +371,11 @@ impl ThxSync {
         let Some(service) = &self.service else { return };
         match service.set_mic(want) {
             Ok(()) => {
-                dlog!("segundo plano: mejoras del micrófono enviadas a THX");
+                dlog!("background: microphone enhancements sent to THX");
                 self.sent = Some(*want);
             }
             Err(e) => {
-                dlog!("segundo plano: mejoras del micrófono: {e}");
+                dlog!("background: microphone enhancements: {e}");
                 // Reconnect and try again on the next check.
                 self.service = None;
             }
@@ -365,6 +385,10 @@ impl ThxSync {
 
 fn run_apply() {
     let cfg = Config::load();
+    if !cfg.headset_model.supported() {
+        eprintln!("rzr: {} is not supported yet; see 'rzr diagnose'.", cfg.headset_model.name());
+        std::process::exit(1);
+    }
 
     print!("rzr: waiting for device...");
     io::stdout().flush().ok();
@@ -378,7 +402,6 @@ fn run_apply() {
     };
 
     println!(" found {}", dev.product);
-    dev.set_options(device::Options::from_config(&cfg));
 
     if !dev.is_headset_connected() {
         eprintln!("  Headset is off or out of range.");
@@ -422,6 +445,63 @@ fn run_import(path: Option<&str>) {
     cfg.active = cfg.profiles.len() - 1;
     match cfg.save() {
         Ok(()) => println!("  Saved. Active profile: \"{}\"", cfg.profile().name),
+        Err(e) => {
+            eprintln!("Error: {e}");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn model_ids() -> Vec<String> {
+    models::HeadsetModel::ALL
+        .iter()
+        .filter_map(|m| serde_json::to_value(m).ok()?.as_str().map(str::to_string))
+        .collect()
+}
+
+/// `rzr diagnose [MODEL] [--seconds N]`: the read-only report from Settings.
+fn run_diagnose(args: &[String]) {
+    let mut model = Config::load().headset_model;
+    let mut listen = diagnostics::LISTEN;
+    let start = args.iter().position(|a| a == "diagnose").map_or(args.len(), |i| i + 1);
+    let mut rest = args[start..].iter();
+    while let Some(arg) = rest.next() {
+        if arg == "--seconds" {
+            match rest.next().and_then(|s| s.parse::<u64>().ok()) {
+                Some(s) => listen = Duration::from_secs(s.min(600)),
+                None => {
+                    eprintln!("Usage: rzr diagnose [MODEL] [--seconds N]");
+                    std::process::exit(1);
+                }
+            }
+        } else if arg.starts_with('-') {
+            // --debug and the like, handled in main().
+        } else if let Ok(m) = serde_json::from_value(serde_json::Value::from(arg.as_str())) {
+            model = m;
+        } else {
+            eprintln!("Unknown model: {arg}. Models: {}", model_ids().join(", "));
+            std::process::exit(1);
+        }
+    }
+    println!("rzr: diagnostics for {} (read-only)", model.name());
+    let result = diagnostics::run(model, listen, &|p| match p {
+        diagnostics::Progress::Step(step) => println!("  {step}"),
+        diagnostics::Progress::Listening { left, reports } => {
+            print!(
+                "\r  Listening: turn the headset off and on, press its buttons... {left:3} s left, {reports} reports "
+            );
+            io::stdout().flush().ok();
+        }
+    });
+    println!();
+    match result {
+        Ok(report) => {
+            for line in &report.summary {
+                println!("  {line}");
+            }
+            println!("  Report saved to {}", report.path.display());
+            println!("  Send it with an issue: {}", gui::ISSUES_URL);
+        }
         Err(e) => {
             eprintln!("Error: {e}");
             std::process::exit(1);

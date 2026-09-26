@@ -1,5 +1,5 @@
 //! The few protobuf messages rzr exchanges with the THX service over ZeroMQ
-//! (package `thx.sa`, from VSSrv's embedded descriptors; docs/HALLAZGOS.md).
+//! (package `thx.sa`, from VSSrv's embedded descriptors; docs/RESEARCH.md).
 //! No I/O. rzr never builds a `State` from scratch: it patches the one the
 //! service returns, so fields it doesn't know (room, emitters...) go back
 //! byte for byte.
@@ -67,7 +67,7 @@ fn read_varint(b: &[u8], i: &mut usize) -> Result<u64, String> {
             return Ok(v);
         }
     }
-    Err("varint demasiado largo".into())
+    Err("varint too long".into())
 }
 
 fn take<'a>(b: &'a [u8], i: &mut usize, n: usize) -> Result<&'a [u8], String> {
@@ -84,7 +84,7 @@ pub fn fields(b: &[u8]) -> Result<Vec<Field<'_>>, String> {
     while i < b.len() {
         let start = i;
         let key = read_varint(b, &mut i)?;
-        let num = u32::try_from(key >> 3).map_err(|_| "número de campo inválido")?;
+        let num = u32::try_from(key >> 3).map_err(|_| "invalid field number")?;
         let value = match (key & 7) as u8 {
             VARINT => Value::Varint(read_varint(b, &mut i)?),
             FIXED64 => Value::Fixed64(take(b, &mut i, 8)?.try_into().unwrap_or_default()),
@@ -93,7 +93,7 @@ pub fn fields(b: &[u8]) -> Result<Vec<Field<'_>>, String> {
                 Value::Bytes(take(b, &mut i, n)?)
             }
             FIXED32 => Value::Fixed32(take(b, &mut i, 4)?.try_into().unwrap_or_default()),
-            w => return Err(format!("tipo de campo protobuf desconocido: {w}")),
+            w => return Err(format!("unknown protobuf wire type: {w}")),
         };
         out.push(Field { num, value, raw: &b[start..i] });
     }
@@ -247,7 +247,7 @@ pub struct Reply {
 }
 
 pub fn parse_reply(payload: &[u8]) -> Result<Reply, String> {
-    let bad = |what: &str| format!("respuesta del servicio de THX inesperada: {what}");
+    let bad = |what: &str| format!("unexpected reply from the THX service: {what}");
     let Some(Value::Bytes(any)) = field(&fields(payload)?, 1) else { return Err(bad("sin mensaje")) };
     let any = fields(any)?;
     let Some(Value::Bytes(url)) = field(&any, 1) else { return Err(bad("sin tipo")) };
@@ -270,7 +270,7 @@ mod tests {
     use super::*;
 
     /// The `x-payload:` of the service's answer to a `Register`, captured on
-    /// the user's PC (2026-09-26): THXMessage > Any > StateChangeResult
+    /// a test PC (2026-09-26): THXMessage > Any > StateChangeResult
     /// { state = 3 }, with Spatial, Normalization and Bass Boost on.
     const CAPTURED_REPLY: &[u8] = include_bytes!("testdata/register-reply.bin");
 

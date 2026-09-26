@@ -1,4 +1,4 @@
-//! Audio MXIC ("PA") protocol for the Razer BlackShark V2 Pro 2.4 dongle (1532:0555).
+//! Audio MXIC ("PA") protocol for the Razer BlackShark V2 Pro (2023) dongle (1532:0555).
 //!
 //! Every command is a 64-byte HID report (report id 0x02):
 //!
@@ -247,15 +247,15 @@ impl EqPreset {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Game => "JUEGO",
-            Self::Movie => "PELÍCULA",
-            Self::Music => "MÚSICA",
-            Self::Custom => "PERSONALIZADO",
-            Self::ApexLegends => "APEX LEGENDS",
-            Self::CallOfDuty => "CALL OF DUTY",
+            Self::Game => "Game",
+            Self::Movie => "Movie",
+            Self::Music => "Music",
+            Self::Custom => "Custom",
+            Self::ApexLegends => "Apex Legends",
+            Self::CallOfDuty => "Call of Duty",
             Self::Csgo => "CS2",
-            Self::Fortnite => "FORTNITE",
-            Self::Valorant => "VALORANT",
+            Self::Fortnite => "Fortnite",
+            Self::Valorant => "Valorant",
         }
     }
 

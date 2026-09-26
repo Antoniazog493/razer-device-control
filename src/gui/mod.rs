@@ -4,7 +4,6 @@
 //! (`App::view`) whenever something changes.
 
 mod assets;
-mod diag;
 mod window;
 
 use serde::Deserialize;
@@ -12,14 +11,15 @@ use serde_json::{json, Value};
 use std::sync::mpsc::{Receiver, Sender};
 use std::time::{Duration, Instant};
 
-use crate::config::{Config, EqMethod, EqMode, Profile};
+use crate::config::{Config, EqMode, Profile};
+use crate::diagnostics::{self, Progress, Report};
 use crate::mic::{self, MicEffect, MicEqPreset, MicSettings};
+use crate::models::HeadsetModel;
 use crate::protocol::{self, EqPreset, EQ_BANDS};
 use crate::thx::{self, ThxChange, ThxEq, ThxLevel, ThxOption};
 use crate::winaudio::{self, AudioDevice, Endpoint};
 use crate::worker::{
-    self, AudioCmd, AudioState, Change, DevCmd, DevEvent, DeviceInfo, DiagCmd, Notify, Target, ThxCmd, ThxEvent,
-    ThxStatus,
+    self, AudioCmd, AudioState, Change, DevCmd, DevEvent, DeviceInfo, Notify, Target, ThxCmd, ThxEvent, ThxStatus,
 };
 use crate::{connlog, debuglog, registry, synapse};
 
@@ -27,6 +27,12 @@ pub use window::run;
 
 const SAVE_DELAY: Duration = Duration::from_millis(500);
 const CONN_LOG_REFRESH: Duration = Duration::from_secs(3);
+/// The project's home, for help and the source code.
+pub const REPO_URL: &str = "https://github.com/Antoniazog493/razer-device-control";
+/// Where to report a problem or send a diagnostics report.
+pub const ISSUES_URL: &str = "https://github.com/Antoniazog493/razer-device-control/issues/new/choose";
+/// How to install THX Spatial Audio without Synapse.
+pub const THX_URL: &str = "https://github.com/Antoniazog493/blackshark-v2-pro-thx-restore";
 
 /// A message from the page: `{"cmd": "preset", "preset": "custom"}`.
 #[derive(Debug, Deserialize)]
@@ -92,7 +98,7 @@ pub enum Msg {
         value: u8,
         commit: bool,
     },
-    /// THX options (MEJORAS); they live in Windows, not in the profile.
+    /// THX options (Enhancements tab); they live in Windows, not in the profile.
     ThxSpatial {
         on: bool,
     },
@@ -115,7 +121,7 @@ pub enum Msg {
     ThxVoiceClarityLevel {
         value: f32,
     },
-    /// Microphone enhancements (MICRÓFONO), stored in the profile.
+    /// Microphone enhancements (Microphone tab), stored in the profile.
     MicEqPreset {
         preset: MicEqPreset,
     },
@@ -139,26 +145,31 @@ pub enum Msg {
     DebugLog {
         on: bool,
     },
-    Advanced {
-        eq_method: EqMethod,
-        release_remote: bool,
-        send_legacy_config: bool,
+    /// The user's headset model (Settings).
+    HeadsetModel {
+        model: HeadsetModel,
     },
+    /// Read-only diagnostics for that model (Settings).
+    RunDiagnostics,
     /// Open something outside the app: "mixer", "sound", "connlog",
-    /// "debuglog", "logdir", "configdir".
+    /// "debuglog", "logdir", "configdir", "report", "reportdir", "issues",
+    /// "repo", "thx".
     Open {
         what: String,
     },
-    WizardOpen,
-    WizardStart,
-    WizardPress {
-        k: usize,
-    },
-    WizardAnswer {
-        heard: bool,
-    },
-    WizardFinish,
-    WizardCancel,
+}
+
+/// The diagnostics run shown in Settings.
+#[derive(Default)]
+struct DiagState {
+    running: bool,
+    step: String,
+    result: Option<Result<Report, String>>,
+}
+
+enum DiagEvent {
+    Progress(Progress),
+    Done(Result<Report, String>),
 }
 
 pub struct App {
@@ -179,7 +190,9 @@ pub struct App {
     conn_log: Vec<String>,
     conn_drops_today: usize,
     conn_log_read: Instant,
-    wizard: Option<diag::Wizard>,
+    diag: DiagState,
+    diag_rx: Option<Receiver<DiagEvent>>,
+    notify: Notify,
     /// Notifications for the page, taken by the window.
     toasts: Vec<(String, bool)>,
     /// The state changed since the page last got it.
@@ -191,7 +204,7 @@ impl App {
         let cfg = Config::load();
         let (dev_tx, dev_rx) = worker::spawn_device_worker(Target::from_config(&cfg), demo, notify.clone());
         let (audio_tx, audio_rx) = worker::spawn_audio_worker(demo, notify.clone());
-        let (thx_tx, thx_rx) = worker::spawn_thx_worker(demo, notify);
+        let (thx_tx, thx_rx) = worker::spawn_thx_worker(demo, notify.clone());
         // THX may have lost them (a restart); its thread sends them once it can.
         let _ = thx_tx.send(ThxCmd::Mic(cfg.profile().mic));
         Self {
@@ -211,7 +224,9 @@ impl App {
             conn_log: connlog::recent(12),
             conn_drops_today: connlog::drops_today(),
             conn_log_read: Instant::now(),
-            wizard: None,
+            diag: DiagState::default(),
+            diag_rx: None,
+            notify,
             toasts: Vec::new(),
             changed: true,
         }
@@ -322,11 +337,11 @@ impl App {
                     self.mark_dirty();
                     self.sync_thx_eq();
                     if from_button {
-                        self.toast(format!("Preset cambiado desde el headset: {}", preset.label()), false);
+                        self.toast(format!("Preset changed on the headset: {}", preset.label()), false);
                     } else {
                         self.toast(
                             format!(
-                                "El headset está en {} y no en {}. Si no usaste su botón EQ, no aceptó el cambio: haz la «Prueba guiada» en AJUSTES.",
+                                "The headset is on {} instead of {}: it did not take the change. Try again, and turn on the debug log in Settings if it keeps happening.",
                                 preset.label(),
                                 wanted.label()
                             ),
@@ -334,10 +349,24 @@ impl App {
                         );
                     }
                 }
-                DevEvent::Diag(text) => {
-                    if let Some(w) = &mut self.wizard {
-                        w.on_result(text);
+            }
+        }
+        while let Some(ev) = self.diag_rx.as_ref().and_then(|rx| rx.try_recv().ok()) {
+            self.changed = true;
+            match ev {
+                DiagEvent::Progress(Progress::Step(step)) => self.diag.step = step.into(),
+                DiagEvent::Progress(Progress::Listening { left, reports }) => {
+                    self.diag.step = format!(
+                        "Listening for {left} s: turn the headset off and on, press its buttons, turn its dials… ({reports} report{} so far)",
+                        if reports == 1 { "" } else { "s" }
+                    );
+                }
+                DiagEvent::Done(result) => {
+                    if let Err(e) = &result {
+                        self.toast(format!("Diagnostics failed: {e}"), true);
                     }
+                    self.diag = DiagState { result: Some(result), ..DiagState::default() };
+                    self.diag_rx = None;
                 }
             }
         }
@@ -388,10 +417,10 @@ impl App {
                     self.push(Change::All);
                 }
             }
-            Msg::NewProfile => self.add_profile(Profile { name: "Perfil nuevo".into(), ..Profile::default() }),
+            Msg::NewProfile => self.add_profile(Profile { name: "New profile".into(), ..Profile::default() }),
             Msg::DuplicateProfile => {
                 let mut p = self.profile().clone();
-                p.name = format!("{} (copia)", p.name);
+                p.name = format!("{} (copy)", p.name);
                 self.add_profile(p);
             }
             Msg::RenameProfile { name } => {
@@ -524,69 +553,41 @@ impl App {
                 debuglog::set_enabled(on);
                 self.store();
             }
-            Msg::Advanced { eq_method, release_remote, send_legacy_config } => {
-                self.cfg.eq_method = eq_method;
-                self.cfg.release_remote = release_remote;
-                self.cfg.send_legacy_config = send_legacy_config;
-                self.push(Change::All);
-            }
-            Msg::Open { what } => open(&what),
-            Msg::WizardOpen => {
-                debuglog::set_enabled(true);
-                crate::dlog!("prueba guiada abierta; config: {:?}", Target::from_config(&self.cfg).opts);
-                let _ = self.dev_tx.send(DevCmd::Diag(DiagCmd::Begin));
-                self.wizard = Some(diag::Wizard::new());
-            }
-            Msg::WizardStart => {
-                if let Some(w) = &mut self.wizard {
-                    w.start();
+            Msg::Open { what } => self.open(&what),
+            Msg::HeadsetModel { model } => {
+                if model != self.cfg.headset_model {
+                    self.cfg.headset_model = model;
+                    self.push(Change::All);
                 }
             }
-            Msg::WizardPress { k } => {
-                let can_send = self.info.status.headset_connected && !self.info.busy;
-                if let Some(run) = self.wizard.as_mut().and_then(|w| w.press(k, can_send)) {
-                    let _ = self.dev_tx.send(DevCmd::Diag(DiagCmd::Run {
-                        action: run.action,
-                        method: run.method,
-                        release: run.release,
-                    }));
-                }
-            }
-            Msg::WizardAnswer { heard } => {
-                if let Some(w) = &mut self.wizard {
-                    w.answer(heard);
-                }
-            }
-            Msg::WizardFinish => {
-                let Some(w) = &self.wizard else { return };
-                let outcome = w.outcome();
-                for line in &outcome.summary {
-                    crate::dlog!("respuesta: {line}");
-                }
-                if let Some((method, release)) = outcome.method {
-                    self.cfg.eq_method = method;
-                    self.cfg.release_remote = release;
-                }
-                if let Some(v) = outcome.eq_status {
-                    self.cfg.eq_status = v;
-                    self.cfg.send_legacy_config = true;
-                }
-                self.end_wizard();
-            }
-            Msg::WizardCancel => {
-                if self.wizard.is_some() {
-                    crate::dlog!("prueba guiada cancelada");
-                    self.end_wizard();
-                }
-            }
+            Msg::RunDiagnostics => self.run_diagnostics(),
         }
     }
 
-    fn end_wizard(&mut self) {
-        self.wizard = None;
-        self.save_now();
-        let _ = self.dev_tx.send(DevCmd::Diag(DiagCmd::End(Target::from_config(&self.cfg))));
-        debuglog::set_enabled(self.cfg.debug_log);
+    /// Start the read-only diagnostics for the chosen model in the
+    /// background; its progress comes back through `pump`.
+    fn run_diagnostics(&mut self) {
+        if self.diag.running {
+            return;
+        }
+        let model = self.cfg.headset_model;
+        self.diag = DiagState { running: true, step: "Starting…".into(), ..DiagState::default() };
+        let (tx, rx) = std::sync::mpsc::channel();
+        self.diag_rx = Some(rx);
+        let notify = self.notify.clone();
+        let demo = self.demo;
+        std::thread::spawn(move || {
+            let send = |ev: DiagEvent| {
+                let _ = tx.send(ev);
+                notify();
+            };
+            let result = if demo {
+                demo_diagnostics(&|p| send(DiagEvent::Progress(p)))
+            } else {
+                diagnostics::run(model, diagnostics::LISTEN, &|p| send(DiagEvent::Progress(p)))
+            };
+            send(DiagEvent::Done(result));
+        });
     }
 
     fn add_profile(&mut self, mut profile: Profile) {
@@ -609,9 +610,9 @@ impl App {
                 self.push(Change::All);
                 self.toast(
                     if n == 1 {
-                        "Perfil de Synapse importado".to_string()
+                        "Synapse profile imported".to_string()
                     } else {
-                        format!("{n} perfiles de Synapse importados")
+                        format!("{n} Synapse profiles imported")
                     },
                     false,
                 );
@@ -651,12 +652,14 @@ impl App {
 
     /// (text, level) for the connection indicator; level is ok/warn/error.
     fn connection(&self) -> (&'static str, &'static str) {
-        if !self.info.dongle {
-            ("Dongle no encontrado", "error")
+        if !self.cfg.headset_model.supported() {
+            ("Model not supported yet", "warn")
+        } else if !self.info.dongle {
+            ("Dongle not found", "error")
         } else if !self.info.status.headset_connected {
-            ("Headset apagado o fuera de alcance", "warn")
+            ("Headset off or out of range", "warn")
         } else {
-            ("Conectado", "ok")
+            ("Connected", "ok")
         }
     }
 
@@ -668,6 +671,7 @@ impl App {
         let presets = |list: &[EqPreset]| -> Vec<Value> {
             list.iter().map(|&x| json!({ "id": x, "label": x.label() })).collect()
         };
+        let model = self.cfg.headset_model;
         let endpoint = |e: &Option<Endpoint>| {
             e.as_ref()
                 .map(|e| json!({ "id": e.id, "name": e.name, "volume": (e.volume * 100.0).round(), "muted": e.muted }))
@@ -680,7 +684,7 @@ impl App {
             "demo": self.demo,
             "version": env!("CARGO_PKG_VERSION"),
             "device": {
-                "product": if self.info.product.is_empty() { "Razer BlackShark V2 Pro" } else { &self.info.product },
+                "product": if self.info.product.is_empty() || !model.supported() { model.name() } else { &self.info.product },
                 "dongle": self.info.dongle,
                 "headset": st.headset_connected,
                 "busy": self.info.busy,
@@ -693,6 +697,26 @@ impl App {
                 "dongle_firmware": self.info.dongle_firmware,
                 "serial": self.info.serial,
                 "preset": st.preset.map(|x| x.label()),
+            },
+            "model": {
+                "id": model,
+                "name": model.name(),
+                "supported": model.supported(),
+                "options": HeadsetModel::ALL.iter().map(|&m| json!({
+                    "id": m,
+                    "name": m.name(),
+                    "hint": m.hint(),
+                    "supported": m.supported(),
+                })).collect::<Vec<_>>(),
+            },
+            "diag": {
+                "running": self.diag.running,
+                "step": self.diag.step,
+                "summary": self.diag.result.as_ref().and_then(|r| r.as_ref().ok()).map(|r| &r.summary),
+                "file": self.diag.result.as_ref().and_then(|r| r.as_ref().ok()).map(|r| {
+                    r.path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default()
+                }),
+                "error": self.diag.result.as_ref().and_then(|r| r.as_ref().err()),
             },
             "profiles": self.cfg.profiles.iter().map(|x| &x.name).collect::<Vec<_>>(),
             "active": self.cfg.active,
@@ -725,10 +749,6 @@ impl App {
             "settings": {
                 "autostart": self.autostart,
                 "debug_log": self.cfg.debug_log,
-                "eq_method": self.cfg.eq_method,
-                "release_remote": self.cfg.release_remote,
-                "send_legacy_config": self.cfg.send_legacy_config,
-                "eq_status": self.cfg.eq_status,
                 "config_path": Config::path().display().to_string(),
             },
             "thx": self.thx.state.as_ref().map(|s| json!({
@@ -760,28 +780,54 @@ impl App {
                 "available": self.thx.service,
             },
             "connlog": { "lines": self.conn_log, "drops_today": self.conn_drops_today },
-            "wizard": self.wizard.as_ref().map(|w| w.view(st.headset_connected, self.info.busy)),
         })
+    }
+
+    /// Open a file, folder, web page or Windows panel named by the page.
+    fn open(&self, what: &str) {
+        let dir_of = |path: std::path::PathBuf| {
+            if let Some(dir) = path.parent() {
+                let _ = std::fs::create_dir_all(dir);
+                winaudio::open_path(dir);
+            }
+        };
+        let report = self.diag.result.as_ref().and_then(|r| r.as_ref().ok()).map(|r| r.path.clone());
+        match what {
+            "mixer" => winaudio::open_volume_mixer(),
+            "sound" => winaudio::open_sound_settings(),
+            "connlog" => winaudio::open_path(&connlog::path()),
+            "debuglog" => winaudio::open_path(&debuglog::path()),
+            "logdir" => dir_of(debuglog::path()),
+            "configdir" => dir_of(Config::path()),
+            "report" => {
+                if let Some(path) = report {
+                    winaudio::open_path(&path);
+                }
+            }
+            "reportdir" => {
+                let dir = diagnostics::dir();
+                let _ = std::fs::create_dir_all(&dir);
+                winaudio::open_path(&dir);
+            }
+            "issues" => winaudio::open_path(std::path::Path::new(ISSUES_URL)),
+            "repo" => winaudio::open_path(std::path::Path::new(REPO_URL)),
+            "thx" => winaudio::open_path(std::path::Path::new(THX_URL)),
+            _ => {}
+        }
     }
 }
 
-/// Open a file, folder or Windows panel named by the page.
-fn open(what: &str) {
-    let dir_of = |path: std::path::PathBuf| {
-        if let Some(dir) = path.parent() {
-            let _ = std::fs::create_dir_all(dir);
-            winaudio::open_path(dir);
-        }
-    };
-    match what {
-        "mixer" => winaudio::open_volume_mixer(),
-        "sound" => winaudio::open_sound_settings(),
-        "connlog" => winaudio::open_path(&connlog::path()),
-        "debuglog" => winaudio::open_path(&debuglog::path()),
-        "logdir" => dir_of(debuglog::path()),
-        "configdir" => dir_of(Config::path()),
-        _ => {}
+/// Fake diagnostics for `--demo` and the page's demo: nothing is read.
+fn demo_diagnostics(progress: &dyn Fn(Progress)) -> Result<Report, String> {
+    progress(Progress::Step("Looking for Razer devices…"));
+    for left in (1..=3).rev() {
+        progress(Progress::Listening { left, reports: 3 - left as usize });
+        std::thread::sleep(Duration::from_secs(1));
     }
+    Ok(Report {
+        path: diagnostics::dir().join("rzr-diagnostics-demo.txt"),
+        summary: vec!["Demo: nothing was read.".into()],
+    })
 }
 
 #[cfg(test)]
@@ -805,9 +851,10 @@ mod tests {
             Msg::SidetoneVolume { value: 40, commit: true }
         ));
         assert!(matches!(
-            parse(r#"{"cmd":"advanced","eq_method":"relatch","release_remote":false,"send_legacy_config":true}"#),
-            Msg::Advanced { eq_method: EqMethod::Relatch, release_remote: false, send_legacy_config: true }
+            parse(r#"{"cmd":"headset_model","model":"blackshark_v2_pro_2020"}"#),
+            Msg::HeadsetModel { model: HeadsetModel::BlackSharkV2Pro2020 }
         ));
+        assert!(matches!(parse(r#"{"cmd":"run_diagnostics"}"#), Msg::RunDiagnostics));
         assert!(matches!(parse(r#"{"cmd":"thx_bass_boost","on":false}"#), Msg::ThxBassBoost { on: false }));
         assert!(matches!(parse(r#"{"cmd":"thx_voice_clarity","on":true}"#), Msg::ThxVoiceClarity { on: true }));
         assert!(matches!(parse(r#"{"cmd":"thx_spatial","on":true}"#), Msg::ThxSpatial { on: true }));
@@ -838,5 +885,7 @@ mod tests {
             Msg::MicEffectLevel { effect: MicEffect::NoiseReduction, value: 80 }
         ));
         assert!(serde_json::from_str::<Msg>(r#"{"cmd":"format_disk"}"#).is_err());
+        // The guided EQ test is gone.
+        assert!(serde_json::from_str::<Msg>(r#"{"cmd":"wizard_open"}"#).is_err());
     }
 }

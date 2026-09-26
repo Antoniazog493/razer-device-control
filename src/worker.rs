@@ -7,12 +7,13 @@ use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
-use crate::config::{Config, EqMethod, Profile};
+use crate::config::{Config, Profile};
 use crate::connlog::ConnLog;
-use crate::device::{self, Device, Options, Status};
+use crate::device::{self, Device, Status};
 use crate::dlog;
 use crate::mic::MicSettings;
-use crate::protocol::{EqPreset, EQ_BANDS};
+use crate::models::HeadsetModel;
+use crate::protocol::EqPreset;
 use crate::thx::{self, ThxChange, ThxEq, ThxOption, ThxState};
 use crate::winaudio::{self, AudioDevice, Endpoint, Flow};
 
@@ -38,16 +39,17 @@ pub enum Change {
     MicEq,
 }
 
-/// Settings the device worker needs besides the profile.
+/// What the device worker keeps the headset at.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Target {
     pub profile: Profile,
-    pub opts: Options,
+    /// The user's model. The worker only talks to supported ones.
+    pub model: HeadsetModel,
 }
 
 impl Target {
     pub fn from_config(cfg: &Config) -> Self {
-        Self { profile: cfg.profile().clone(), opts: Options::from_config(cfg) }
+        Self { profile: cfg.profile().clone(), model: cfg.headset_model }
     }
 }
 
@@ -56,28 +58,6 @@ pub enum DevCmd {
     Update(Target, Change),
     /// Store the new target without pushing (applied on next connect).
     SetTarget(Target),
-    /// Guided EQ test (AJUSTES).
-    Diag(DiagCmd),
-}
-
-pub enum DiagCmd {
-    /// Stop polling and keep other rzr processes off the dongle.
-    Begin,
-    /// Send one test setting with the given method, then read the headset
-    /// back (answered with DevEvent::Diag).
-    Run { action: DiagAction, method: EqMethod, release: bool },
-    /// Resume normal operation with this target, re-applying the profile.
-    End(Target),
-}
-
-#[derive(Clone, Copy, Debug)]
-pub enum DiagAction {
-    /// Custom preset with this curve, then leave the preset and come back.
-    CurveRelatch([i8; EQ_BANDS]),
-    /// This curve written into a given preset's slot (e.g. an esports one).
-    SlotCurve(EqPreset, [i8; EQ_BANDS]),
-    /// Select a preset without writing any curve.
-    Select(EqPreset),
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -103,8 +83,6 @@ pub enum DevEvent {
         preset: EqPreset,
         from_button: bool,
     },
-    /// Result of a guided-test step: what the headset reports afterwards.
-    Diag(String),
 }
 
 pub fn spawn_device_worker(target: Target, demo: bool, notify: Notify) -> (Sender<DevCmd>, Receiver<DevEvent>) {
@@ -121,7 +99,6 @@ pub fn spawn_device_worker(target: Target, demo: bool, notify: Notify) -> (Sende
             last_write: Instant::now() - PRESET_SETTLE,
             button_preset: false,
             first_poll: true,
-            diag: false,
             misses: 0,
             log: ConnLog::new("panel"),
         };
@@ -143,8 +120,6 @@ struct DevWorker {
     button_preset: bool,
     /// The panel just opened: nothing read from the headset yet.
     first_poll: bool,
-    /// Guided test running: no polling, no automatic writes.
-    diag: bool,
     /// Consecutive polls without the headset; one dropped reply isn't a
     /// disconnect (and would otherwise re-apply the profile on the next poll).
     misses: u32,
@@ -169,10 +144,6 @@ impl DevWorker {
                     if self.check_events() {
                         next_poll = Instant::now();
                     }
-                }
-                Err(RecvTimeoutError::Timeout) if self.diag => {
-                    self.check_events();
-                    next_poll = Instant::now() + POLL_CONNECTED;
                 }
                 Err(RecvTimeoutError::Timeout) => {
                     self.poll();
@@ -206,17 +177,17 @@ impl DevWorker {
         };
         let mut poll_now = false;
         for e in &events {
-            dlog!("aviso del headset: {:02X} {:?}", e.cmd, e.data);
+            dlog!("headset event: {:02X} {:?}", e.cmd, e.data);
             // The EQ button reports the new preset. A select of ours that
             // briefly lands elsewhere does too, so this only triggers a read:
             // what the headset plays once our write is done decides.
-            if e.preset().is_some() && !self.diag {
+            if e.preset().is_some() {
                 self.button_preset = true;
                 poll_now = true;
             }
         }
         for link in events.iter().filter_map(|e| e.link()) {
-            self.log_link(link, "aviso del headset");
+            self.log_link(link, "headset event");
             if link {
                 poll_now = true;
             } else if self.info.status.headset_connected {
@@ -258,20 +229,18 @@ impl DevWorker {
                     }
                 }
                 DevCmd::SetTarget(t) => self.target = t,
-                DevCmd::Diag(d) => {
-                    self.diag_cmd(d);
-                    changes.clear();
-                }
             }
         }
-        if let Some(dev) = &self.dev {
-            dev.set_options(self.target.opts);
+        if !self.target.model.supported() {
+            // Switched to a model rzr doesn't control: let go of the dongle.
+            self.dev = None;
+            return;
         }
         if changes.contains(&Change::All) {
             changes = vec![Change::All];
         }
         changes.sort();
-        if !changes.is_empty() && !self.diag {
+        if !changes.is_empty() {
             self.push(&changes);
         }
     }
@@ -282,63 +251,6 @@ impl DevWorker {
         self.set_info(info);
     }
 
-    /// One step of the guided test.
-    fn diag_cmd(&mut self, cmd: DiagCmd) {
-        match cmd {
-            DiagCmd::Begin => {
-                dlog!("=== prueba guiada: inicio ===");
-                self.diag = true;
-                if self.dev.is_none() && !self.demo {
-                    self.dev = Device::open(0).ok();
-                }
-                if let Some(dev) = &self.dev {
-                    dev.set_options(self.target.opts);
-                    dev.hold_bus(true);
-                }
-            }
-            DiagCmd::Run { action, method, release } => {
-                dlog!("=== prueba guiada: {action:?}, método {method:?}, liberar remoto {release} ===");
-                self.set_busy(true);
-                let text = if self.demo {
-                    thread::sleep(Duration::from_millis(400));
-                    format!("(demo) {action:?}")
-                } else {
-                    match &self.dev {
-                        None => "Dongle no encontrado".to_string(),
-                        Some(dev) => {
-                            dev.set_options(Options { method, release_remote: release, ..self.target.opts });
-                            let result = match action {
-                                DiagAction::CurveRelatch(bands) => dev.set_curve_relatched(EqPreset::Custom, &bands),
-                                DiagAction::SlotCurve(p, bands) => dev.set_slot_curve(p, &bands),
-                                DiagAction::Select(p) => dev.set_preset(p),
-                            };
-                            thread::sleep(Duration::from_millis(150));
-                            let back = dev.eq_readback();
-                            match result {
-                                Ok(()) => format!("Enviado. El headset dice: {back}"),
-                                Err(e) => format!("Error: {e}. El headset dice: {back}"),
-                            }
-                        }
-                    }
-                };
-                dlog!("resultado: {text}");
-                self.last_write = Instant::now();
-                self.set_busy(false);
-                self.emit(DevEvent::Diag(text));
-            }
-            DiagCmd::End(target) => {
-                dlog!("=== prueba guiada: fin, opciones {:?} ===", target.opts);
-                self.diag = false;
-                self.target = target;
-                if let Some(dev) = &self.dev {
-                    dev.hold_bus(false);
-                    dev.set_options(self.target.opts);
-                }
-                self.push(&[Change::All]);
-            }
-        }
-    }
-
     /// The panel opened with the headset already on: its EQ button may have
     /// switched presets while no rzr was running, so keep the headset's
     /// preset rather than overwrite it with the profile's. Not on a later
@@ -346,7 +258,7 @@ impl DevWorker {
     fn adopt_headset_preset(&mut self) {
         let Some(p) = self.info.status.preset else { return };
         if p != self.target.profile.active_preset() {
-            dlog!("al abrir, el headset está en {p:?}, el perfil dice {:?}", self.target.profile.active_preset());
+            dlog!("on open, the headset is on {p:?}, the profile says {:?}", self.target.profile.active_preset());
             self.target.profile.select_preset(p);
             self.emit(DevEvent::PresetChanged { preset: p, from_button: true });
         }
@@ -354,9 +266,9 @@ impl DevWorker {
 
     /// Send changes to the headset, if it's there to receive them.
     fn push(&mut self, changes: &[Change]) {
-        dlog!("enviar {changes:?}");
+        dlog!("send {changes:?}");
         if !self.info.status.headset_connected {
-            self.message("Guardado. Se aplicará cuando el headset se conecte.", false);
+            self.message("Saved. It will be applied when the headset connects.", false);
             return;
         }
         self.set_busy(true);
@@ -370,13 +282,13 @@ impl DevWorker {
         self.set_busy(false);
 
         if let Err(e) = result {
-            dlog!("error al enviar: {e}");
-            self.message(format!("No se pudo aplicar: {e}"), true);
+            dlog!("send failed: {e}");
+            self.message(format!("Could not apply: {e}"), true);
             if e != device::BUSY {
                 self.dev = None; // reopen on next poll
             }
         } else if changes == [Change::All] {
-            self.message(format!("Perfil «{}» aplicado", self.target.profile.name), false);
+            self.message(format!("Profile \"{}\" applied", self.target.profile.name), false);
         }
     }
 
@@ -385,7 +297,7 @@ impl DevWorker {
             thread::sleep(Duration::from_millis(300));
             return Ok(());
         }
-        let dev = self.dev.as_ref().ok_or("Dongle no encontrado")?;
+        let dev = self.dev.as_ref().ok_or("Dongle not found")?;
         let p = &self.target.profile;
         for change in changes {
             match change {
@@ -412,9 +324,6 @@ impl DevWorker {
         }
         if self.dev.is_none() {
             self.dev = Device::open(0).ok();
-            if let Some(dev) = &self.dev {
-                dev.set_options(self.target.opts);
-            }
         }
         let dev = self.dev.as_ref()?;
         match dev.status() {
@@ -422,7 +331,7 @@ impl DevWorker {
             // The watcher is mid-sequence: keep the last state.
             Err(e) if e == device::BUSY => Some(self.info.status.clone()),
             Err(e) => {
-                dlog!("error al leer el estado: {e}");
+                dlog!("could not read the state: {e}");
                 self.dev = None;
                 None
             }
@@ -432,8 +341,12 @@ impl DevWorker {
     fn poll(&mut self) {
         let was_connected = self.info.status.headset_connected;
         let first = std::mem::take(&mut self.first_poll);
+        if !self.target.model.supported() {
+            self.set_info(DeviceInfo::default());
+            return;
+        }
         let Some(status) = self.read_status() else {
-            self.log_link(false, "dongle no encontrado");
+            self.log_link(false, "dongle not found");
             self.set_info(DeviceInfo::default());
             return;
         };
@@ -455,7 +368,7 @@ impl DevWorker {
         };
         info.status = status;
         let connected = info.status.headset_connected;
-        self.log_link(connected, "comprobación periódica");
+        self.log_link(connected, "periodic check");
 
         // The dongle answers this even with the headset off.
         if info.dongle_firmware.is_none() {
@@ -498,7 +411,7 @@ impl DevWorker {
         if let Some(p) = self.info.status.preset {
             let wanted = self.target.profile.active_preset();
             if connected && preset_drifted(p, wanted, from_button, self.last_write.elapsed()) {
-                dlog!("el headset está en {p:?}, el perfil dice {wanted:?} (botón: {from_button})");
+                dlog!("the headset is on {p:?}, the profile says {wanted:?} (button: {from_button})");
                 self.target.profile.select_preset(p);
                 self.emit(DevEvent::PresetChanged { preset: p, from_button });
             }
@@ -535,7 +448,7 @@ fn set_default_device(id: &str) {
         .flat_map(winaudio::list_devices)
         .find(|d| d.id == id)
         .map_or_else(|| id.to_string(), |d| d.name);
-    dlog!("predeterminado elegido en el panel: {name} ({})", if set { "hecho" } else { "falló" });
+    dlog!("default device picked in the panel: {name} ({})", if set { "done" } else { "failed" });
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -618,7 +531,7 @@ pub fn spawn_audio_worker(demo: bool, notify: Notify) -> (Sender<AudioCmd>, Rece
 /// headset's EQ button while Synapse is open).
 const THX_POLL: Duration = Duration::from_secs(2);
 /// How long the service may take to rewrite its JSON after a change (it took
-/// 1-3 s on the user's PC).
+/// 1-3 s on a test PC).
 const THX_CONFIRM: Duration = Duration::from_secs(6);
 
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -651,8 +564,8 @@ impl ThxCmd {
     fn label(self) -> String {
         match self {
             ThxCmd::Change(c) => c.label(),
-            ThxCmd::Eq(_) => "Ecualizador de THX".into(),
-            ThxCmd::Mic(_) => "Mejoras del micrófono".into(),
+            ThxCmd::Eq(_) => "THX equalizer".into(),
+            ThxCmd::Mic(_) => "Microphone enhancements".into(),
         }
     }
 
@@ -777,7 +690,7 @@ impl ThxWorker {
     fn poll(&mut self) {
         let state = self.read();
         if self.service.as_ref().is_some_and(|s| !s.alive()) {
-            self.problem("se perdió la conexión con el servicio de THX".into());
+            self.problem("lost the connection to the THX service".into());
             self.service = None;
         }
         if state.is_some() && self.service.is_none() {
@@ -800,12 +713,12 @@ impl ThxWorker {
         if self.demo {
             return;
         }
-        dlog!("THX: micrófono {mic:?}");
+        dlog!("THX: microphone {mic:?}");
         match service.set_mic(&mic) {
-            Ok(()) => dlog!("THX: micrófono confirmado"),
+            Ok(()) => dlog!("THX: microphone confirmed"),
             Err(e) if asked => {
                 dlog!("THX: {e}");
-                self.message(format!("Mejoras del micrófono: {e}"), true);
+                self.message(format!("Microphone enhancements: {e}"), true);
             }
             Err(e) => self.problem(e),
         }
@@ -846,7 +759,7 @@ impl ThxWorker {
             (Some(service), ThxCmd::Change(change)) => service.apply(change),
             (Some(service), ThxCmd::Eq(eq)) => service.set_eq(&eq),
             (Some(_), ThxCmd::Mic(_)) => Ok(()),
-            (None, _) => Err("el servicio de THX no responde".to_string()),
+            (None, _) => Err("the THX service does not answer".to_string()),
         };
         let error = match result {
             Ok(()) => self.confirm(cmd, before.sequence_number),
@@ -876,13 +789,13 @@ impl ThxWorker {
             thread::sleep(Duration::from_millis(250));
             if let Some(s) = self.read() {
                 if s.sequence_number > seq_before && change.shown_in(&s) {
-                    dlog!("THX: confirmado, secuencia {}", s.sequence_number);
+                    dlog!("THX: confirmed, sequence {}", s.sequence_number);
                     self.update(ThxStatus { state: Some(s), ..self.status.clone() });
                     return None;
                 }
             }
         }
-        Some("el servicio aceptó el cambio pero su estado guardado no lo muestra".to_string())
+        Some("the service accepted the change, but its saved state does not show it".to_string())
     }
 }
 
@@ -903,16 +816,16 @@ fn demo_thx() -> ThxState {
 
 fn demo_audio() -> AudioState {
     let out = AudioDevice {
-        name: "Auriculares (Razer BlackShark V2 Pro 2.4)".into(),
+        name: "Headphones (Razer BlackShark V2 Pro 2.4)".into(),
         id: "demo-out".into(),
         is_default: true,
     };
     let inp =
-        AudioDevice { name: "Micrófono (Razer BlackShark V2 Pro 2.4)".into(), id: "demo-in".into(), is_default: true };
+        AudioDevice { name: "Microphone (Razer BlackShark V2 Pro 2.4)".into(), id: "demo-in".into(), is_default: true };
     AudioState {
         outputs: vec![
             out.clone(),
-            AudioDevice { name: "Altavoces (Realtek(R) Audio)".into(), id: "demo-spk".into(), is_default: false },
+            AudioDevice { name: "Speakers (Realtek(R) Audio)".into(), id: "demo-spk".into(), is_default: false },
         ],
         inputs: vec![inp.clone()],
         headset_out: Some(Endpoint { id: out.id, name: out.name, volume: 0.8, muted: false }),
@@ -942,6 +855,7 @@ fn demo_update(s: &mut AudioState, id: &str, f: impl Fn(&mut Endpoint)) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::protocol::EQ_BANDS;
     use crate::thx::ThxLevel;
 
     #[test]

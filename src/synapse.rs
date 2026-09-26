@@ -10,13 +10,13 @@ use crate::config::{EqMode, Profile};
 use crate::protocol::{EqPreset, EQ_BANDS};
 
 pub fn import_file(path: &std::path::Path) -> Result<Vec<Profile>, String> {
-    let text = std::fs::read_to_string(path).map_err(|e| format!("No se pudo leer el archivo: {e}"))?;
+    let text = std::fs::read_to_string(path).map_err(|e| format!("Could not read the file: {e}"))?;
     import_str(&text)
 }
 
 pub fn import_str(text: &str) -> Result<Vec<Profile>, String> {
-    let root: Value = serde_json::from_str(text).map_err(|_| "No es un archivo .synapse4 válido".to_string())?;
-    let entries = root["profiles"].as_array().ok_or("El archivo no contiene perfiles")?;
+    let root: Value = serde_json::from_str(text).map_err(|_| "Not a valid .synapse4 file".to_string())?;
+    let entries = root["profiles"].as_array().ok_or("The file has no profiles")?;
 
     let mut out = Vec::new();
     for entry in entries {
@@ -28,7 +28,7 @@ pub fn import_str(text: &str) -> Result<Vec<Profile>, String> {
     }
 
     if out.is_empty() {
-        return Err("No se encontró ningún perfil válido en el archivo".to_string());
+        return Err("No valid profile was found in the file".to_string());
     }
     Ok(out)
 }

@@ -42,11 +42,11 @@ impl MicEqPreset {
 
     pub fn label(self) -> &'static str {
         match self {
-            Self::Default => "PREDETERMINADO",
-            Self::MicBoost => "REFUERZO DE MICRÓFONO",
-            Self::Broadcast => "TRANSMISIÓN",
-            Self::Conference => "CONFERENCIA",
-            Self::Custom => "PERSONALIZADO",
+            Self::Default => "Default",
+            Self::MicBoost => "Mic Boost",
+            Self::Broadcast => "Broadcast",
+            Self::Conference => "Conference",
+            Self::Custom => "Custom",
         }
     }
 
@@ -113,7 +113,7 @@ impl MicEffect {
 #[serde(default)]
 pub struct MicSettings {
     pub eq_preset: MicEqPreset,
-    /// Personalizado, −12 to +12 dB.
+    /// Custom, −12 to +12 dB.
     pub custom_eq: [i8; EQ_BANDS],
     pub normalization: Effect,
     pub voice_clarity: Effect,

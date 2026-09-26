@@ -63,16 +63,16 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
     use winreg::RegKey;
     let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
         .create_subkey(RUN_KEY)
-        .map_err(|e| format!("No se pudo abrir el registro: {e}"))?;
+        .map_err(|e| format!("Could not open the registry: {e}"))?;
     if enable {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let cmd = format!("\"{}\" --silent --watch", exe.display());
-        key.set_value(RUN_VALUE, &cmd).map_err(|e| format!("No se pudo escribir en el registro: {e}"))
+        key.set_value(RUN_VALUE, &cmd).map_err(|e| format!("Could not write to the registry: {e}"))
     } else {
         match key.delete_value(RUN_VALUE) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(format!("No se pudo escribir en el registro: {e}")),
+            Err(e) => Err(format!("Could not write to the registry: {e}")),
         }
     }
 }
@@ -84,7 +84,7 @@ pub fn autostart_enabled() -> bool {
 
 #[cfg(not(windows))]
 pub fn set_autostart(_enable: bool) -> Result<(), String> {
-    Err("Solo disponible en Windows".to_string())
+    Err("Only available on Windows".to_string())
 }
 
 #[cfg(test)]

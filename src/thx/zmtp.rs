@@ -58,22 +58,22 @@ pub struct Req<S> {
 impl<S: Read + Write> Req<S> {
     /// Do the handshake on a freshly connected stream.
     pub fn handshake(mut stream: S) -> Result<Self, String> {
-        let io = |e: std::io::Error| format!("saludo ZeroMQ: {e}");
+        let io = |e: std::io::Error| format!("ZeroMQ greeting: {e}");
         stream.write_all(&greeting()).map_err(io)?;
         let mut peer = [0u8; 64];
         stream.read_exact(&mut peer).map_err(io)?;
         if peer[0] != 0xff || peer[9] != 0x7f || peer[10] < 3 {
-            return Err("el servicio no habla ZMTP 3".into());
+            return Err("the service does not speak ZMTP 3".into());
         }
         if !peer[12..32].starts_with(b"NULL\0") {
-            return Err("el servicio pide un mecanismo de seguridad desconocido".into());
+            return Err("the service asks for an unknown security mechanism".into());
         }
         stream.write_all(&ready_command()).map_err(io)?;
         let mut req = Self { stream };
         let (flags, body) = req.read_frame()?;
         let name = body.get(1..1 + usize::from(*body.first().unwrap_or(&0))).unwrap_or_default();
         if flags & COMMAND == 0 || name != b"READY" {
-            let mut text = "el servicio rechazó la conexión ZeroMQ".to_string();
+            let mut text = "the service refused the ZeroMQ connection".to_string();
             if name == b"ERROR" {
                 // ERROR: a 1-byte length and the reason.
                 text += &format!(": {}", String::from_utf8_lossy(body.get(7..).unwrap_or_default()));
@@ -84,7 +84,7 @@ impl<S: Read + Write> Req<S> {
     }
 
     fn read_frame(&mut self) -> Result<(u8, Vec<u8>), String> {
-        let io = |e: std::io::Error| format!("lectura ZeroMQ: {e}");
+        let io = |e: std::io::Error| format!("ZeroMQ read: {e}");
         let mut head = [0u8; 1];
         self.stream.read_exact(&mut head).map_err(io)?;
         let size = if head[0] & LONG != 0 {
@@ -98,7 +98,7 @@ impl<S: Read + Write> Req<S> {
         };
         // The service's messages are a few KB; anything huge is a broken stream.
         if size > 1 << 20 {
-            return Err("trama ZeroMQ demasiado grande".into());
+            return Err("ZeroMQ frame too large".into());
         }
         let mut body = vec![0u8; size as usize];
         self.stream.read_exact(&mut body).map_err(io)?;
@@ -112,7 +112,7 @@ impl<S: Read + Write> Req<S> {
         for (i, part) in parts.iter().enumerate() {
             out.extend(frame(if i + 1 < parts.len() { MORE } else { 0 }, part));
         }
-        self.stream.write_all(&out).map_err(|e| format!("envío ZeroMQ: {e}"))?;
+        self.stream.write_all(&out).map_err(|e| format!("ZeroMQ send: {e}"))?;
 
         let mut reply = Vec::new();
         loop {
@@ -129,7 +129,7 @@ impl<S: Read + Write> Req<S> {
         // Drop the delimiter (and anything a ROUTER put before it).
         match reply.iter().position(Vec::is_empty) {
             Some(i) => Ok(reply.split_off(i + 1)),
-            None => Err("respuesta ZeroMQ sin delimitador".into()),
+            None => Err("ZeroMQ reply without a delimiter".into()),
         }
     }
 }
@@ -211,10 +211,10 @@ mod tests {
     #[test]
     fn refuses_bad_peers() {
         let err = |input: Vec<u8>| Req::handshake(fake(input)).err().unwrap();
-        assert!(err(b"HTTP/1.1 400 Bad Request\r\n".to_vec()).contains("saludo"));
+        assert!(err(b"HTTP/1.1 400 Bad Request\r\n".to_vec()).contains("greeting"));
         let mut curve = greeting();
         curve[12..17].copy_from_slice(b"CURVE");
-        assert!(err(curve.to_vec()).contains("mecanismo"));
+        assert!(err(curve.to_vec()).contains("security mechanism"));
         let mut refused = greeting().to_vec();
         refused.extend(frame(COMMAND, b"\x05ERROR\x04nope"));
         assert!(err(refused).ends_with("nope"));

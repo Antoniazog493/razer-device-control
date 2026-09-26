@@ -1,7 +1,7 @@
 //! THX Spatial Audio: reading its state and changing its options.
 //!
 //! THX is an audio effect in Windows, not part of the headset (see
-//! docs/HALLAZGOS.md). Its full state is a JSON string that the THX service
+//! docs/RESEARCH.md). Its full state is a JSON string that the THX service
 //! (`VSSrv.exe`) keeps in the headset's output endpoint properties; rzr reads
 //! it from the registry, because the endpoint's property store cuts strings at
 //! 259 characters and the JSON is about 1 KB. Changes go to the service, which
@@ -59,7 +59,7 @@ pub struct ThxState {
 
 /// Parse the JSON the THX service stores for the endpoint.
 pub fn parse_state(json: &str) -> Result<ThxState, String> {
-    serde_json::from_str(json).map_err(|e| format!("estado de THX ilegible: {e}"))
+    serde_json::from_str(json).map_err(|e| format!("unreadable THX state: {e}"))
 }
 
 /// A THX option rzr can switch on and off.
@@ -94,8 +94,8 @@ impl ThxOption {
         match self {
             ThxOption::Spatial => "THX Spatial Audio",
             ThxOption::BassBoost => "Bass Boost",
-            ThxOption::Normalization => "Normalización de sonido",
-            ThxOption::VoiceClarity => "Claridad de voz",
+            ThxOption::Normalization => "Sound Normalization",
+            ThxOption::VoiceClarity => "Voice Clarity",
         }
     }
 }
@@ -160,7 +160,7 @@ impl ThxChange {
     pub fn label(self) -> String {
         match self {
             ThxChange::Switch(o, _) => o.label().to_string(),
-            ThxChange::Level(l, _) => format!("Nivel de {}", l.option().label()),
+            ThxChange::Level(l, _) => format!("{} level", l.option().label()),
         }
     }
 
@@ -209,7 +209,7 @@ mod zmq {
 
     impl Session {
         fn open(addr: SocketAddr) -> Result<Self, String> {
-            let io = |e: std::io::Error| format!("no se pudo conectar con el servicio de THX por ZeroMQ: {e}");
+            let io = |e: std::io::Error| format!("could not reach the THX service over ZeroMQ: {e}");
             let stream = TcpStream::connect_timeout(&addr, TIMEOUT).map_err(io)?;
             stream.set_read_timeout(Some(TIMEOUT)).map_err(io)?;
             stream.set_write_timeout(Some(TIMEOUT)).map_err(io)?;
@@ -227,16 +227,16 @@ mod zmq {
             let parts = self.req.request(&[&self.address, b"x-originator:rzr", &payload])?;
             for part in &parts {
                 if let Some(e) = part.strip_prefix(b"x-Exception:") {
-                    return Err(format!("el servicio de THX respondió un error: {}", String::from_utf8_lossy(e)));
+                    return Err(format!("the THX service answered with an error: {}", String::from_utf8_lossy(e)));
                 }
             }
             let body = parts
                 .iter()
                 .find_map(|p| p.strip_prefix(b"x-payload:"))
-                .ok_or("el servicio de THX respondió sin datos")?;
+                .ok_or("the THX service answered without data")?;
             let reply = proto::parse_reply(body)?;
             if reply.status != 0 {
-                return Err(format!("el servicio de THX no aceptó el cambio ({}): {}", reply.status, reply.msg));
+                return Err(format!("the THX service did not accept the change ({}): {}", reply.status, reply.msg));
             }
             Ok(reply)
         }
@@ -251,7 +251,7 @@ mod zmq {
         if proto::shows(&reply.state, patch)? {
             Ok(())
         } else {
-            Err("el servicio de THX respondió, pero su estado no muestra el cambio".into())
+            Err("the THX service answered, but its state does not show the change".into())
         }
     }
 
@@ -264,7 +264,7 @@ mod zmq {
         let reply = s.call(&proto::set_preset(&s.state, name)?)?;
         match proto::string(&reply.state, proto::state::PRESET_NAME)? {
             now if now == name => Ok(()),
-            now => Err(format!("el servicio de THX sigue en el preset «{now}» y no en «{name}»")),
+            now => Err(format!("the THX service is still on preset \"{now}\" instead of \"{name}\"")),
         }
     }
 }
@@ -311,10 +311,10 @@ impl ThxEq {
 /// The THX preset's name as the page shows it.
 pub fn preset_label(name: &str) -> &str {
     match name {
-        "Game Mode" => "Juego",
-        "Cinema Mode" => "Película",
-        "Music Mode" => "Música",
-        "Custom" => "Personalizado",
+        "Game Mode" => "Game",
+        "Cinema Mode" => "Movie",
+        "Music Mode" => "Music",
+        "Custom" => "Custom",
         other => other,
     }
 }
@@ -460,11 +460,11 @@ mod imp {
         /// Fails if THX isn't installed or its service can't be reached.
         pub fn connect() -> Result<Self, String> {
             let com: IVSSrvTHXSettings = unsafe { CoCreateInstance(&CLSID_THX_SETTINGS, None, CLSCTX_LOCAL_SERVER) }
-                .map_err(|e| format!("no se pudo conectar con el servicio de THX: {e}"))?;
+                .map_err(|e| format!("could not reach the THX service: {e}"))?;
             let settings: IVSSrvSettings = unsafe { CoCreateInstance(&CLSID_SETTINGS, None, CLSCTX_LOCAL_SERVER) }
-                .map_err(|e| format!("no se pudo conectar con el servicio de THX: {e}"))?;
+                .map_err(|e| format!("could not reach the THX service: {e}"))?;
             // The service keeps settings per user session and finds ours by process ID.
-            let refused = |e| format!("el servicio de THX rechazó la conexión: {e}");
+            let refused = |e| format!("the THX service refused the connection: {e}");
             unsafe { com.init(std::process::id()) }.ok().map_err(refused)?;
             unsafe { settings.init(std::process::id()) }.ok().map_err(refused)?;
             Ok(Self { com, settings, zmq: zmq_address() })
@@ -478,7 +478,7 @@ mod imp {
                     if self.com_set(option, on)? == on {
                         Ok(())
                     } else {
-                        Err("el servicio de THX no aceptó el cambio".into())
+                        Err("the THX service did not accept the change".into())
                     }
                 }
                 _ => zmq::change(self.zmq, change.patch()),
@@ -494,16 +494,16 @@ mod imp {
             let mut msg = vec![0u8; INBAND_LEN];
             unsafe { self.com.set_current_mode_eq_gains(ORIGINATOR, gains.as_ptr(), &mut sz, msg.as_mut_ptr()) }
                 .ok()
-                .map_err(|e| format!("el servicio de THX no aplicó la curva: {e}"))?;
+                .map_err(|e| format!("the THX service did not apply the curve: {e}"))?;
             // `float[31]` in the type library.
             let mut back = [0f32; 31];
             unsafe { self.com.get_current_mode_eq_gains(back.as_mut_ptr()) }
                 .ok()
-                .map_err(|e| format!("no se pudo leer la curva de THX: {e}"))?;
+                .map_err(|e| format!("could not read the THX curve: {e}"))?;
             if back == gains {
                 Ok(())
             } else {
-                Err("el servicio de THX no guardó la curva".into())
+                Err("the THX service did not save the curve".into())
             }
         }
 
@@ -517,7 +517,7 @@ mod imp {
         /// The microphone enhancements as the service has them.
         fn mic(&self) -> Result<MicState, String> {
             let s = &self.settings;
-            let read = |e| format!("no se pudo leer el micrófono en THX: {e}");
+            let read = |e| format!("could not read the microphone settings from THX: {e}");
             let mut eq = [0f32; EQ_BANDS];
             unsafe { s.get_mic_eq_gains(eq.as_mut_ptr()) }.ok().map_err(read)?;
             let mut params = [0f32; MIC_PARAMS];
@@ -533,7 +533,7 @@ mod imp {
             let s = &self.settings;
             let want = MicState::from(mic);
             let now = self.mic()?;
-            let fail = |e| format!("el servicio de THX no aplicó el cambio: {e}");
+            let fail = |e| format!("the THX service did not apply the change: {e}");
             let set = |p: u32, v: f32| unsafe { s.set_mic_params(p, v) }.ok().map_err(fail);
             if now.eq != want.eq {
                 unsafe { s.set_mic_eq_gains(want.eq.as_ptr()) }.ok().map_err(fail)?;
@@ -560,7 +560,7 @@ mod imp {
             if self.mic()?.shows(&want) {
                 Ok(())
             } else {
-                Err("el servicio de THX no guardó las mejoras del micrófono".into())
+                Err("the THX service did not save the microphone enhancements".into())
             }
         }
 
@@ -576,10 +576,10 @@ mod imp {
                     ThxOption::Spatial => s.set_spatial_processing_state(ORIGINATOR, v, m, p),
                     ThxOption::BassBoost => s.set_bass_boost_state(ORIGINATOR, v, m, p),
                     ThxOption::VoiceClarity => s.set_dialog_enhance_state(ORIGINATOR, v, m, p),
-                    ThxOption::Normalization => return Err("la normalización no va por COM".into()),
+                    ThxOption::Normalization => return Err("normalization does not go through COM".into()),
                 }
             };
-            hr.ok().map_err(|e| format!("el servicio de THX no aplicó el cambio: {e}"))?;
+            hr.ok().map_err(|e| format!("the THX service did not apply the change: {e}"))?;
             let mut v = 0i32;
             let hr = unsafe {
                 match option {
@@ -588,7 +588,7 @@ mod imp {
                     _ => s.get_dialog_enhance_state(&mut v),
                 }
             };
-            hr.ok().map_err(|e| format!("no se pudo leer el estado de THX: {e}"))?;
+            hr.ok().map_err(|e| format!("could not read the THX state: {e}"))?;
             Ok(v != 0)
         }
     }
@@ -607,16 +607,16 @@ mod imp {
 
     impl Service {
         pub fn connect() -> Result<Self, String> {
-            Err("THX solo existe en Windows".into())
+            Err("THX only exists on Windows".into())
         }
         pub fn apply(&self, _change: ThxChange) -> Result<(), String> {
-            Err("THX solo existe en Windows".into())
+            Err("THX only exists on Windows".into())
         }
         pub fn set_eq(&self, _eq: &ThxEq) -> Result<(), String> {
-            Err("THX solo existe en Windows".into())
+            Err("THX only exists on Windows".into())
         }
         pub fn set_mic(&self, _mic: &MicSettings) -> Result<(), String> {
-            Err("THX solo existe en Windows".into())
+            Err("THX only exists on Windows".into())
         }
         pub fn alive(&self) -> bool {
             false
@@ -631,7 +631,7 @@ pub use imp::*;
 mod tests {
     use super::*;
 
-    /// Hand-written, shaped like the JSON in docs/HALLAZGOS.md (not a capture).
+    /// Hand-written, shaped like the JSON in docs/RESEARCH.md (not a capture).
     const SAMPLE: &str = r#"{"sequenceNumber":12,"spatialEnabled":false,"hardwareId":"usb\\1532\\0555",
         "outputDevice":"Headphones","presetName":"Music Mode","eqCurve":[0,1,1,1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0],
         "tilt":0,"spatialProcessingMode":"Headphones5","drcEnabled":true,"drcLevel":40,
@@ -694,7 +694,7 @@ mod tests {
         s.bass_boost = 30.2;
         assert!(ThxChange::Level(ThxLevel::BassBoost, 30.0).shown_in(&s));
         assert!(!ThxChange::Level(ThxLevel::BassBoost, 31.0).shown_in(&s));
-        assert_eq!(ThxChange::Level(ThxLevel::Normalization, 0.0).label(), "Nivel de Normalización de sonido");
+        assert_eq!(ThxChange::Level(ThxLevel::Normalization, 0.0).label(), "Sound Normalization level");
     }
 
     #[test]
@@ -744,7 +744,7 @@ mod tests {
         assert_eq!(ThxEq::new(EqPreset::Music, [0; 10]).preset, "Music Mode");
         assert_eq!(ThxEq::new(EqPreset::Custom, [0; 10]).preset, "Custom");
         assert_eq!(ThxEq::new(EqPreset::Csgo, [0; 10]).preset, "Custom");
-        // Music as the service stores it (docs/HALLAZGOS.md, `eqCurve`).
+        // Music as the service stores it (docs/RESEARCH.md, `eqCurve`).
         let music = ThxEq::new(EqPreset::Music, EqPreset::Music.curve().unwrap());
         let stored = [0, 2, 2, 2, 2, 2, 2, 1, 1, 1, 1, 1, 1, 2, 2, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 1, 1, 1, 0, 0, 0];
         assert_eq!(music.gains(), stored.map(|v: i8| f32::from(v)));
@@ -757,8 +757,8 @@ mod tests {
 
     #[test]
     fn preset_labels() {
-        assert_eq!(preset_label("Cinema Mode"), "Película");
-        assert_eq!(preset_label("Custom"), "Personalizado");
+        assert_eq!(preset_label("Cinema Mode"), "Movie");
+        assert_eq!(preset_label("Custom"), "Custom");
         assert_eq!(preset_label("Something New"), "Something New");
     }
 }
