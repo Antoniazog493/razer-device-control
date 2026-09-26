@@ -1,42 +1,44 @@
-# Decisiones de arquitectura (ADR)
+# Architecture decision records
 
-Cada archivo registra una decisión importante: el contexto, lo que se decidió, las alternativas y lo que implica. Sirve para que nadie la deshaga sin saber por qué se tomó.
+Each file records an important decision: its context, what was decided, the alternatives and what it implies. It's there so nobody undoes a decision without knowing why it was made.
 
-Se escribe un ADR solo si la decisión cumple las tres condiciones:
+Write an ADR only when the decision meets all three:
 
-1. **Es difícil de revertir** (cambiarla después cuesta).
-2. **Sorprendería sin contexto** (alguien preguntaría "¿por qué así?").
-3. **Hubo alternativas reales** y se eligió una por motivos concretos.
+1. **It's hard to undo** (changing it later is costly).
+2. **It would surprise someone without context** ("why like this?").
+3. **There were real alternatives**, and one was picked for concrete reasons.
 
-Los ADR no se editan después de aceptados. Si la decisión cambia, se escribe uno nuevo que diga "Reemplaza a 000X" y el viejo se marca como reemplazado.
+ADRs aren't edited once accepted (translations and status links aside). If a decision changes, write a new one saying "Supersedes 000X" and mark the old one as superseded.
 
-| # | Decisión | Estado |
+| # | Decision | Status |
 |---|---|---|
-| [0001](0001-interfaz-web-webview2.md) | La interfaz es una página web en WebView2 | Aceptada |
-| [0002](0002-secuencias-verificadas.md) | Solo secuencias de Synapse/OpenRazer, con candado y verificación por lectura | Aceptada |
-| [0003](0003-thx-por-sus-ajustes.md) | THX se controla escribiendo sus ajustes, sin redistribuir su driver | Aceptada (el camino lo elige 0004) |
-| [0004](0004-thx-por-com.md) | Los ajustes de THX se cambian por la interfaz COM de su servicio | Aceptada (ampliada por 0005) |
-| [0005](0005-thx-por-zeromq.md) | Lo que COM no puede cambiar en THX va por ZeroMQ, con un cliente propio | Aceptada |
-| [0006](0006-eq-como-synapse.md) | El preset del headset elige también el preset y la curva de THX | Aceptada |
-| [0007](0007-microfono-en-el-perfil.md) | Las mejoras del micrófono se guardan en el perfil y rzr se las vuelve a mandar a THX | Aceptada |
+| [0001](0001-web-ui-in-webview2.md) | The interface is a web page in WebView2 | Accepted |
+| [0002](0002-verified-sequences-only.md) | Only Synapse/OpenRazer sequences, with a lock and read-back | Accepted (guided test retired by 0008) |
+| [0003](0003-control-thx-through-its-settings.md) | THX is controlled through its settings, without shipping its driver | Accepted (road chosen in 0004) |
+| [0004](0004-thx-over-com.md) | THX settings are changed through its service's COM interface | Accepted (extended by 0005) |
+| [0005](0005-thx-over-zeromq.md) | What COM can't change in THX goes over ZeroMQ, with our own client | Accepted |
+| [0006](0006-eq-like-synapse.md) | The headset preset also picks THX's preset and curve | Accepted |
+| [0007](0007-mic-enhancements-in-the-profile.md) | Mic enhancements live in the profile and rzr sends them to THX again | Accepted |
+| [0008](0008-read-only-diagnostics-for-other-models.md) | Models that aren't supported only get read-only diagnostics | Accepted |
+| [0009](0009-thx-installer-in-a-separate-repository.md) | THX's installers are offered from a separate repository | Accepted |
 
-## Plantilla
+## Template
 
 ```markdown
-# 000X. Título en forma de decisión
+# 000X. Title stated as the decision
 
-- Estado: Propuesta | Aceptada | Reemplazada por 000Y
-- Fecha: AAAA-MM-DD
+- Status: Proposed | Accepted | Superseded by 000Y
+- Date: YYYY-MM-DD
 
-## Contexto
-Qué problema había y qué restricciones.
+## Context
+What problem there was, and the constraints.
 
-## Decisión
-Qué se decidió, en una o dos frases claras.
+## Decision
+What was decided, in one or two clear sentences.
 
-## Alternativas
-Qué más se consideró y por qué no.
+## Alternatives
+What else was considered and why not.
 
-## Consecuencias
-Qué se gana, qué se pierde y qué hay que cuidar desde ahora.
+## Consequences
+What's gained, what's lost and what needs care from now on.
 ```

@@ -1,181 +1,139 @@
 # rzr
 
-Panel de control liviano para los audífonos **Razer BlackShark V2 Pro** (versión 2.4 GHz + Bluetooth, dongle `1532:0555`) que **reemplaza a Razer Synapse**. Es un solo `.exe` portátil de ~1,3 MB, sin instalador ni servicios en segundo plano.
+**A lightweight control panel for the Razer BlackShark V2 Pro that replaces Razer Synapse.**
+One portable 1.6 MB `.exe`: equalizer, THX Spatial Audio, microphone enhancements, mic monitoring, battery and more, with no installer, no account and no background services.
 
-![Pestaña Sonido](docs/sonido.png)
+[![Build](https://github.com/Antoniazog493/razer-device-control/actions/workflows/build.yml/badge.svg)](https://github.com/Antoniazog493/razer-device-control/actions/workflows/build.yml)
+[![Latest release](https://img.shields.io/github/v/release/Antoniazog493/razer-device-control?include_prereleases&label=release)](https://github.com/Antoniazog493/razer-device-control/releases)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](LICENSE)
+![Windows 10/11](https://img.shields.io/badge/Windows-10%20%7C%2011-blue)
 
-![Ecualizador](docs/ecualizador.png)
+![The Sound tab: equalizer, volume and default output](docs/images/sound.png)
 
-![Micrófono](docs/microfono.png)
+## The problem
 
-## El problema
+Connect a BlackShark V2 Pro without Synapse and it sounds quiet and flat: the headset keeps its factory settings, and the features you bought it for (THX Spatial Audio, Bass Boost, the microphone enhancements) are Windows audio effects that only Synapse knows how to drive. Synapse, meanwhile, is a heavy suite with several background services.
 
-Al conectar los BlackShark V2 Pro sin Synapse, el audio suena bajo y plano: los presets integrados del headset son los de fábrica. Synapse envía la configuración real (preset del ecualizador, curva personalizada, etc.) por USB HID cada vez que cambias de perfil. Sin Synapse, esos comandos nunca llegan.
+**rzr** sends the headset the same USB commands Synapse sends, talks to THX the way Synapse does, and gives you a small panel to set it all up, in a single small `.exe`.
 
-**rzr** envía exactamente los mismos comandos y además te da una interfaz como la de Synapse para configurar todo a tu gusto.
+## Features
 
-## Qué puedes controlar
-
-| Función | Dónde vive | Estado |
+| | Feature | Works without Synapse |
 |---|---|---|
-| Ecualizador: presets Juego / Película / Música | Headset | ✅ |
-| Ecualizador: presets Esports (Apex, CoD, CS2, Fortnite, Valorant) | Headset | ✅ |
-| Ecualizador personalizado de 10 bandas (−5 a +5 dB) | Headset | ✅ |
-| Monitoreo de micrófono (sidetone) y su nivel | Headset | ✅ |
-| Apagado automático (15–60 min) | Headset | ✅ |
-| No molestar (bloquear llamadas por Bluetooth) | Headset | ✅ |
-| Batería, carga, estado del botón de silencio, firmware, serie | Headset (lectura) | ✅ |
-| Volumen de salida y del micrófono, silenciar | Windows | ✅ |
-| Elegir el dispositivo de salida/entrada predeterminado (solo al elegirlo; nunca solo) | Windows | ✅ |
-| Varios perfiles, importar perfiles de Synapse (`.synapse4`) | rzr | ✅ |
-| Iniciar con Windows y aplicar el perfil al conectar/reconectar | rzr | ✅ |
-| Registro de caídas de conexión (hora y duración de cada corte) | rzr | ✅ |
-| Bass Boost, Claridad de voz y THX Spatial Audio (activar/desactivar), preset de THX | Motor THX en el PC (instalado por Synapse; no hace falta abrirlo) | ✅ ver abajo |
-| Normalización de sonido y niveles de Bass Boost / Claridad de voz | Motor THX en el PC | Solo se muestran; se cambian en Synapse |
-| EQ de micrófono, normalización, claridad vocal, reducción de ruido, puerta de voz | Software de Synapse en el PC | ❌ ver abajo |
+| 🎚️ | Equalizer: Game, Movie and Music presets, the five esports presets, and a draggable 10-band Custom curve | ✅ |
+| 🔊 | THX Spatial Audio, Bass Boost, Sound Normalization and Voice Clarity, with their levels | ✅ (THX must be installed, [see below](#thx-spatial-audio)) |
+| 🎙️ | Microphone EQ (Default, Mic Boost, Broadcast, Conference, Custom), normalization, vocal clarity, noise reduction and voice gate | ✅ (through THX) |
+| 👂 | Mic monitoring (sidetone) and its level | ✅ |
+| 🔋 | Battery, charging, auto power-off, Do Not Disturb, firmware | ✅ |
+| 🪟 | Windows volume, mute and default output/input device | ✅ |
+| 📁 | Several profiles; import your Synapse profiles (`.synapse4`) | ✅ |
+| 🔁 | Start with Windows: applies your profile whenever the headset connects, and follows the headset's EQ button | ✅ |
+| 📈 | Connection log of wireless drops, with their duration | ✅ |
 
-### ¿Por qué faltan algunas funciones de Synapse?
+<p>
+  <img src="docs/images/enhancement.png" width="49%" alt="The Enhancements tab: THX switches and levels">
+  <img src="docs/images/mic.png" width="49%" alt="The Microphone tab: volume, mic monitoring, enhancements and microphone equalizer">
+</p>
 
-Esas mejoras **no las hace el headset**. Una captura de los logs de Synapse 4 con este headset, activando y desactivando cada opción, lo confirma:
+## Supported headsets
 
-- Synapse **no envía ningún comando USB** al headset para Bass Boost, Normalización, Claridad de voz, THX ni para ninguna mejora del micrófono.
-- Bass Boost, Normalización, Claridad de voz y THX Spatial Audio se aplican con `AudioEffectsTHXV3.setRender…`, es decir, en el **motor de audio de THX**. Synapse lo instala en Windows como efecto de audio ("THX Spatial Audio (BlackShark V2 Pro)") y **reemplaza** a los efectos de Windows que traían los audífonos ("Microsoft Audio Home Theater Effects").
-- Las mejoras de micrófono tampoco usan USB: sin THX instalado no hacen nada; con THX, también van a su motor.
+| Headset | Dongle | Status |
+|---|---|---|
+| **Razer BlackShark V2 Pro (2023)**, 2.4 GHz + Bluetooth, charges over USB-C | `1532:0555` | ✅ Supported |
+| Razer BlackShark V2 Pro (2020), 2.4 GHz only, charges over micro-USB | `1532:0528` | 🔍 Diagnostics only: [help add it](docs/NEW-HEADSETS.md) |
+| Other Razer headsets | — | 🔍 Diagnostics only: [help add it](docs/NEW-HEADSETS.md) |
 
-El efecto de THX queda instalado en Windows como un APO (se carga en `audiodg.exe`) y **sigue sonando con Synapse cerrado**. Sus ajustes los guarda el **servicio de THX** (`VSSrv.exe`, parte del paquete de driver de THX, no de Razer) en el registro de la salida de los audífonos. rzr los lee de ahí y cambia Bass Boost, Claridad de voz y THX Spatial Audio por la interfaz COM de ese servicio, sin Synapse y sin administrador. La normalización y los niveles todavía no: por COM no se puede y el protocolo que usa Synapse (ZeroMQ) aún no se entiende del todo. Detalle en [docs/HALLAZGOS.md](docs/HALLAZGOS.md#cómo-le-llegan-los-ajustes-a-thx) y [ADR 0004](docs/adr/0004-thx-por-com.md).
+Not sure which one you have? The 2023 model's dongle shows up in Device Manager as `VID_1532&PID_0555`. rzr only ever sends commands to supported models; for the others it has a read-only diagnostics report (Settings › Diagnostics) that you can send to help add them.
 
-Sin Synapse, los audífonos vuelven a usar los efectos de Windows, que incluyen **Bass Boost, Loudness Equalization (normalización) y sonido envolvente virtual**. rzr podrá controlarlos una vez identificados sus ajustes: `tools/capturar-synapse.ps1 -Fase windows` los captura. Para el micrófono, las alternativas son [Equalizer APO](https://sourceforge.net/projects/equalizerapo/) (EQ) o NVIDIA Broadcast / RNNoise (reducción de ruido).
+## Download and install
 
-## Descarga
+1. Download `rzr.exe` from the [latest release](https://github.com/Antoniazog493/razer-device-control/releases/latest) (it's also built on every commit: [Actions](https://github.com/Antoniazog493/razer-device-control/actions) › *Build* › `rzr-windows`).
+2. Put it anywhere you like (it's portable) and double-click it.
+3. **Close or uninstall Razer Synapse**: both fight over the dongle.
 
-- **Compilado automáticamente:** en la pestaña **Actions** del repositorio, abre la última ejecución de *Build* y descarga el artefacto `rzr-windows` (contiene `rzr.exe`).
-- **Compilarlo tú:** instala [Rust](https://rustup.rs) (1.95 o superior) y ejecuta `cargo build --release`. El ejecutable queda en `target/release/rzr.exe`.
-- **Requisito:** el panel usa Microsoft Edge WebView2, que ya viene con Windows 10 (actualizado) y Windows 11. Si faltara, rzr avisa y enlaza el instalador; `rzr --watch` y `rzr apply` funcionan igual sin él.
+**Requirements:** Windows 10 or 11, and Microsoft Edge WebView2, which both already include. If it's missing, rzr tells you and links the installer; `rzr --watch` and `rzr apply` work without it.
 
-## Uso
+Windows SmartScreen may warn about an unknown publisher, because the `.exe` isn't code-signed. Choose *More info › Run anyway*, or build it yourself (below). The checksum of each release is in its `SHA256SUMS.txt`.
 
-Haz **doble clic en `rzr.exe`** y se abre el panel. Cada cambio se guarda y se envía al headset al instante. Los cambios de sliders y del ecualizador se envían al soltar.
+## THX Spatial Audio
 
-- **Perfiles:** el menú `•••` junto a *PERFIL* permite crear, duplicar, renombrar, eliminar e importar perfiles.
-- **Importar de Synapse:** exporta tu perfil desde Synapse (archivo `.synapse4`) y usa *Importar de Synapse…* o **arrástralo a la ventana**. Se importan el ecualizador, el sidetone, el apagado automático y No molestar.
-- **Iniciar con Windows:** actívalo en *AJUSTES*. rzr quedará en segundo plano, sin ventana, y aplicará tu perfil cada vez que el headset se conecte o reconecte.
-- **Caídas de conexión:** rzr anota cada vez que el headset pierde el enlace con el dongle y cuánto tardó en volver, en `%APPDATA%\rzr\conexion.log`. Las últimas aparecen en *ENERGÍA*. Usa los avisos que el propio headset envía, así que también detecta cortes de pocos segundos.
-- **Botón EQ del headset:** si cambias de preset con el botón físico, el panel lo detecta y actualiza la selección. Si el headset no acepta un cambio hecho desde el panel, el panel muestra el preset que realmente suena y lo avisa.
-- **Si el ecualizador no cambia el sonido:** en *AJUSTES › DIAGNÓSTICO* abre la **Prueba guiada del ecualizador**. Con música puesta, prueba cada método (A = graves, B = agudos) y responde si oyes el cambio; rzr se queda con el primero que funcione y guarda todo en `debug.log`.
-- **Registro de depuración:** *AJUSTES › DIAGNÓSTICO* (apagado por defecto). Guarda cada comando enviado y recibido del headset en `%APPDATA%\rzr\debug.log` (4 MB como máximo; el anterior queda en `debug.old.log`).
+THX isn't part of the headset: it's a Windows audio effect that Synapse installs for it. rzr controls it through THX's own service, so **Synapse doesn't need to be open, or even installed**, but THX does.
 
-### Línea de comandos
+- **You have Synapse installed:** THX is already there. Open rzr and use the Enhancements tab. You can now uninstall Synapse, but **uninstalling Synapse also removes THX**.
+- **You want THX without Synapse:** use the [BlackShark V2 Pro THX restore package](https://github.com/Antoniazog493/blackshark-v2-pro-thx-restore): download, double-click, restart.
 
-```
-rzr                    Abre el panel
-rzr apply              Aplica el perfil activo al headset
-rzr import ARCHIVO     Importa perfiles de un .synapse4
-rzr --watch            Vigila el headset y aplica el perfil al conectar
-rzr --silent --watch   Lo mismo, en segundo plano sin salida (para el inicio)
-rzr help               Ayuda
+If THX makes no difference, open Sound settings: the headset needs **audio enhancements on** and **Windows Sonic off**.
 
---debug                Escribe debug.log aunque esté apagado en AJUSTES
-```
+## Using it
 
-La configuración se guarda en `%APPDATA%\rzr\config.json`. La primera vez, rzr migra la configuración de versiones anteriores (`HKCU\SOFTWARE\rzr`).
+Double-click `rzr.exe` and the panel opens. Every change is saved and sent to the headset right away (sliders and the EQ curve when you let go).
 
-## Cómo funciona
+- **Profiles:** the `•••` menu next to *Profile* creates, duplicates, renames, deletes and imports profiles.
+- **Import from Synapse:** export your profile from Synapse (`.synapse4`) and use *Import from Synapse…*, or **drop the file on the window**. The EQ, mic monitoring, auto power-off and Do Not Disturb are imported.
+- **Start with Windows** (Settings): rzr stays in the background, without a window, applies your profile whenever the headset connects, and follows its EQ button.
+- **The headset's EQ button:** the panel follows it, and THX switches with it.
+- **Connection drops:** each time the headset loses the link and how long it took to come back is written to `%APPDATA%\rzr\connection.log`; the latest show up in *Power*.
+- **Something wrong?** Settings › Diagnostics has a debug log (`%APPDATA%\rzr\debug.log`) that records every message to the headset.
 
-El dongle expone un endpoint HID propietario (interfaz USB 3, Usage Page `0xFF00`). Se usan reportes de 64 bytes con el protocolo "Audio MXIC" ("PA"):
+![The Settings tab: headset model, diagnostics, start with Windows and profiles](docs/images/settings.png)
+
+### Command line
 
 ```
-[0]  0x02       report id
-[1]  0x80       dirección (host → dispositivo)
-[2]  total_len  8 + largo de datos
-[5]  0x50 'P'   [6] 0x41 'A'
-[7]  inner_len  0x08 (0x0E en el frame de modo remoto)
-[9]  cmd_type   0x02 remoto, 0x03 lectura, 0x04 escritura, 0x0D EQ
-[10] cmd_id
-[11] flag       0 en una petición
-[12] data_len
-[13] datos...
+rzr                         Open the panel
+rzr apply                   Apply the active profile to the headset
+rzr import FILE             Import profiles from a .synapse4 file
+rzr --watch                 Watch for the headset and apply the profile on connect
+rzr --silent --watch        Same, in the background with no output (what Start with Windows uses)
+rzr diagnose [MODEL]        Read-only report for a headset model (--seconds N to listen longer)
+rzr help                    Show the help
+
+--debug                     Write debug.log even if it's off in Settings
 ```
 
-Las respuestas repiten el sub-frame desplazado: `[12]` = id del comando, `[13]` = `0x01` (ACK), `[14]` = largo, `[15..]` = datos.
+Settings live in `%APPDATA%\rzr\config.json`. The first run migrates the settings of rzr 0.1 from the registry.
 
-### Comandos
+## FAQ
 
-| Función | Escritura | Lectura | Datos |
-|---|---|---|---|
-| Modo remoto (antes de cada secuencia) | `02/E1` | — | 1 = software, 0 = headset (en el byte flag) |
-| Selector de preset EQ | `04/93` | `03/13` | `07` Juego, `08` Música, `09` Película, `FF` Personalizado; Esports: `FA` Apex, `FB` CS, `FC` Valorant, `FD` Fortnite, `FE` CoD |
-| Familia del preset | `04/9D` | — | 1 = clásico, 2 = esports |
-| Estado del EQ de presets | `04/9E` | `03/1E` | Synapse envía 0 al iniciar; sin efecto audible según OpenRazer |
-| Curva EQ (Personalizado y cada Esports) | `0D/95` | `03/15` | 10 bytes con signo (dB), se guarda en el preset activo |
-| Preset de EQ del micrófono | `04/96` | — | 0 Predeterminado, 1 Refuerzo, 2 Transmisión, 3 Conferencia, 255 Personalizado (la curva la aplica THX) |
-| Sidetone on/off | `04/98` | `03/18` | 0/1 |
-| Nivel de sidetone | `04/99` | `03/19` | Synapse 0–100 → 0–14 (50 → 7) |
-| No molestar | `04/A7` | `03/27` | 0/1 |
-| Apagado automático | `04/AC` | `03/2C` | minutos (15–60), 0 = nunca |
-| Enlace inalámbrico | — | `03/20` | 1 = headset conectado |
-| Batería / carga | — | `03/21` / `03/2A` | 0–100 / ≠0 = cargando |
-| Botón de silencio | — | `03/55` | 1 = silenciado |
-| Firmware / serie | — | `03/02` / `03/00` | |
-| Firmware del dongle | — | `06/01` + `C2 03 F8 5F 04` | respuesta con flag `C2`: 4 bytes (p. ej. 2.4.1.0) |
+**Does it change anything permanently?** The headset stores its own settings (presets, curves, mic monitoring, auto power-off), exactly as Synapse does. THX's settings are stored by THX's own service. rzr never writes the registry directly, except for its own "Start with Windows" entry.
 
-> **Correcciones respecto a la versión anterior:** el comando `0x93` que antes se llamaba "setVolume" es en realidad el **selector de preset** (`255` = `0xFF` = Personalizado, por eso funcionaba). `0x9D` ("setEnhancement") solo indica la familia del preset. El "SET_CONFIG" `06/01` es solo una consulta de la versión del dongle.
+**Can I use it with Synapse installed?** Yes, but not both at once: close Synapse (from the tray icon) before using rzr.
 
-Una respuesta puede traer varios mensajes "PI" seguidos. El byte `[1]` es el largo total y cada mensaje mide 13 + largo de datos. El byte flag vale `01` en la respuesta a un comando y `02` en un **evento** que el headset envía por su cuenta: conexión (`20`), batería (`21`), No molestar (`27`), carga (`2A`) y silencio del micrófono (`55`).
+**Why isn't the Custom curve heard?** Without THX installed, some units store the Custom curve but don't play it (see [STATUS.md](docs/STATUS.md#open-questions)). With THX installed, rzr applies the same curve in THX, as Synapse does, and it's heard.
 
-### Peculiaridades del firmware
+**Is it safe for my headset?** rzr only sends command sequences that Synapse itself sends or that OpenRazer verified on this headset, reads the result back, and never experiments ([ADR 0002](docs/adr/0002-verified-sequences-only.md)).
 
-- El enlace 2.4 GHz se duerme tras ~0,3 s sin tráfico y descarta el primer frame que recibe. Cada secuencia empieza con un frame de modo remoto "de sacrificio".
-- Un cambio de preset que cruza de familia (clásico ↔ esports) solo cambia la familia. rzr lee el preset activo y reintenta hasta confirmarlo.
-- El headset guarda una curva `0x95` en el preset que esté activo. rzr confirma que el preset correcto está activo antes de escribirla. Luego reenvía el selector para que la curva nueva se escuche de inmediato. Igual que Synapse, rzr escribe también la curva de cada preset Esports; Juego/Música/Película vienen de fábrica y solo se seleccionan.
-- Los presets Juego/Música/Película editados en Synapse solo cambian el EQ por software de THX; el headset sigue usando su curva de fábrica. Por eso en rzr son de solo lectura.
-- Una consulta termina con el modo remoto apagado. Si llega en medio de una escritura de otro proceso, el headset ignora el resto de la escritura. Por eso el panel y el proceso en segundo plano comparten un candado (mutex `Local\rzr_hid_bus`) y nunca envían a la vez.
-- Todavía sin confirmar en este headset: si el modo remoto debe quedar encendido para que el EQ se oiga (la primera versión de rzr nunca lo apagaba) y qué hace `0x9E`. La prueba guiada lo averigua y guarda el resultado (`eq_method`, `release_remote`, `eq_status` en `config.json`).
+## How it works
 
-## Código
+The dongle has a vendor-defined HID interface (USB interface 3, usage page `0xFF00`) that takes 64-byte reports in what Razer calls the "Audio MXIC" protocol. rzr was built by reading Synapse's own logs, which print every command it sends, and checking each one against OpenRazer's driver for this headset. The details are in [docs/PROTOCOL.md](docs/PROTOCOL.md).
 
-| Archivo | Contenido |
-|---|---|
-| `src/protocol.rs` | Construcción de frames, tabla de comandos, presets |
-| `src/device.rs` | Comunicación HID y secuencias de escritura (verificada y la original) |
-| `src/debuglog.rs` | Registro de depuración opcional (`debug.log`) |
-| `src/instance.rs` | Instancia única del proceso en segundo plano y candado del dongle |
-| `src/config.rs` | Perfiles y configuración (JSON) |
-| `src/synapse.rs` | Importador de `.synapse4` |
-| `src/winaudio.rs` | Volumen, silencio y dispositivo predeterminado de Windows |
-| `src/worker.rs` | Hilos en segundo plano (headset y audio) para la interfaz |
-| `src/gui/` | Ventana (WebView2) y controlador del panel: recibe los comandos de la página y le envía el estado; `diag.rs` es la lógica de la prueba guiada |
-| `ui/` | La interfaz: `index.html`, `app.css`, `app.js` (y `demo.js` con datos de prueba) |
-| `src/registry.rs` | Migración del registro e inicio con Windows |
+THX is driven through its Windows service (`VSSrv`): its COM interface for the switches and the EQ, and the same ZeroMQ messages Synapse sends for the levels and presets ([docs/RESEARCH.md](docs/RESEARCH.md)).
 
-`rzr --demo` abre el panel con un headset simulado, útil para probar la interfaz sin el dispositivo.
+The panel is a plain HTML/CSS/JS page shown in WebView2, controlled from Rust ([docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)).
 
-### Modificar la interfaz
+## Building from source
 
-La interfaz es una página web normal en `ui/`, que rzr muestra con WebView2 (el motor de Edge). Rust le envía el estado con `rzr.state(...)` y la página responde con comandos JSON como `{"cmd": "preset", "preset": "custom"}`. El estado lo arma `App::view()` y los comandos son el enum `Msg`, ambos en `src/gui/mod.rs`.
+Install [Rust](https://rustup.rs) (stable, MSVC toolchain on Windows) and run:
 
-- **Sin compilar:** abre `ui/index.html` en cualquier navegador. Sin rzr detrás, carga `demo.js` con datos de prueba y puedes probar casi todo.
-- **Con rzr:** `set RZR_UI_DIR=C:\ruta\a\ui` y luego `rzr --demo`. rzr lee la página de esa carpeta en vez de la incluida en el `.exe`: edita y pulsa F5.
-- **Agregar una función:** en el HTML, los atributos `data-text`, `data-show`, `data-toggle` y `data-slider` enlazan elementos con el estado (ver el comentario al inicio de `index.html`). Luego se agrega el comando a `Msg` y el dato a `App::view()`.
+```
+cargo build --release
+```
 
-Para compilar en Linux (solo para desarrollo) hace falta `libwebkit2gtk-4.1-dev`.
+The executable is `target/release/rzr.exe`. `cargo run -- --demo` opens the panel with a simulated headset, and `ui/index.html` can be opened in any browser with demo data. On Linux (development only) you need `libwebkit2gtk-4.1-dev`.
 
-## Documentación
+## Contributing
 
-| Documento | Para qué |
-|---|---|
-| [docs/ESTADO.md](docs/ESTADO.md) | Qué está hecho, qué falta y qué sigue |
-| [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) | Cómo está construida la app y cómo agregar funciones |
-| [docs/HALLAZGOS.md](docs/HALLAZGOS.md) | Lo averiguado sobre el headset, Synapse, THX y Windows |
-| [docs/REGLAS.md](docs/REGLAS.md) | Reglas de trabajo: código, pruebas, git y documentación |
-| [docs/adr/](docs/adr/) | Decisiones importantes y sus porqués |
-| [CONTEXT.md](CONTEXT.md) | Glosario del proyecto |
-| [CHANGELOG.md](CHANGELOG.md) | Historial de cambios |
+Bug reports, headset reports and pull requests are welcome. Start with [CONTRIBUTING.md](CONTRIBUTING.md); to help support another headset, see [docs/NEW-HEADSETS.md](docs/NEW-HEADSETS.md). What works and what's next is in [docs/STATUS.md](docs/STATUS.md).
 
-## Créditos
+## Credits
 
-- Protocolo original por ingeniería inversa de Synapse 4: [Ashesh3/razer-device-control](https://github.com/Ashesh3/razer-device-control).
-- Tabla de comandos y secuencias verificadas en hardware: driver de OpenRazer para este headset ([openrazer/openrazer#2862](https://github.com/openrazer/openrazer/pull/2862)).
+- The original protocol work and the first rzr: [Ashesh3/razer-device-control](https://github.com/Ashesh3/razer-device-control).
+- Command table and hardware-verified sequences: OpenRazer's driver for this headset ([openrazer/openrazer#2862](https://github.com/openrazer/openrazer/pull/2862)).
 
-## Licencia
+## Disclaimer
 
-MIT
+rzr is an independent project, not affiliated with, endorsed by or supported by Razer Inc. or THX Ltd. Razer, BlackShark and Synapse are trademarks of Razer Inc.; THX and THX Spatial Audio are trademarks of THX Ltd. rzr contains no Razer or THX code or files. Use it at your own risk.
+
+## License
+
+[MIT](LICENSE)

@@ -1,16 +1,16 @@
-## Qué cambia
+## What changes
 
-<!-- Qué y por qué, en pocas líneas. -->
+<!-- What and why, in a few lines. -->
 
-## Cómo se verificó
+## How it was checked
 
-- [ ] `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` y `node --check ui/app.js`
-- [ ] Compila para Windows (CI o `--target x86_64-pc-windows-gnu`)
-- [ ] Interfaz revisada (`ui/index.html` en el navegador o `rzr --demo`), si aplica
-- [ ] Probado en el headset real: <!-- qué, o "no" y por qué -->
+- [ ] `cargo fmt --check`, `cargo clippy --all-targets -- -D warnings`, `cargo test` and `node --check ui/app.js`
+- [ ] Builds for Windows (CI or `--target x86_64-pc-windows-gnu`)
+- [ ] Interface checked (`ui/index.html` in a browser or `rzr --demo`), if it changed
+- [ ] Tested on a real headset: <!-- what, or "no" and why -->
 
-## Documentación
+## Docs
 
-- [ ] `docs/ESTADO.md` al día
-- [ ] `CHANGELOG.md` (si el usuario lo nota)
-- [ ] `docs/ARQUITECTURA.md`, `docs/HALLAZGOS.md`, `CONTEXT.md` o un ADR, si aplica
+- [ ] `docs/STATUS.md` up to date
+- [ ] `CHANGELOG.md` (if users will notice)
+- [ ] `docs/ARCHITECTURE.md`, `docs/PROTOCOL.md`, `docs/RESEARCH.md`, `CONTEXT.md` or an ADR, if needed

@@ -1,35 +1,34 @@
-# rzr: guía para trabajar en este repositorio
+# rzr: working in this repository
 
-Panel de control para los audífonos Razer BlackShark V2 Pro (dongle `1532:0555`) que reemplaza a Razer Synapse. Rust + una página web (WebView2) en Windows.
+A control panel for Razer BlackShark V2 Pro headsets that replaces Razer Synapse. Rust plus a web page (WebView2) on Windows.
 
-## Antes de empezar
+## Before you start
 
-1. Lee **[docs/ESTADO.md](docs/ESTADO.md)**: qué está hecho, qué falta y qué sigue. Es la fuente de verdad del trabajo.
-2. Usa los términos de **[CONTEXT.md](CONTEXT.md)** (preset, ranura, curva, modo remoto…) en código, commits y conversación.
-3. Sigue **[docs/REGLAS.md](docs/REGLAS.md)**. Lo más importante está abajo.
+1. Read **[docs/STATUS.md](docs/STATUS.md)**: what's done, what's missing and what's next. It's the source of truth for the work.
+2. Use the terms in **[CONTEXT.md](CONTEXT.md)** (preset, slot, curve, remote mode, model…) in code, commits and conversation.
+3. Follow **[CONTRIBUTING.md](CONTRIBUTING.md)**. The essentials are below.
+4. If `local/HANDOFF.md` exists, read it too: the maintainer's notes for working on their own PC (never published; `local/` is ignored by git).
 
-**Si trabajas en la PC del usuario (Windows, headset real):** lee también [docs/HANDOFF.md](docs/HANDOFF.md).
+More: [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) (how the app is built), [docs/PROTOCOL.md](docs/PROTOCOL.md) (the headset's USB protocol), [docs/RESEARCH.md](docs/RESEARCH.md) (Synapse, THX and Windows findings), [docs/NEW-HEADSETS.md](docs/NEW-HEADSETS.md), [docs/adr/](docs/adr/) (decisions and why), [CHANGELOG.md](CHANGELOG.md).
 
-Más documentos: [docs/ARQUITECTURA.md](docs/ARQUITECTURA.md) (cómo está construida la app), [docs/HALLAZGOS.md](docs/HALLAZGOS.md) (lo averiguado sobre el headset, Synapse y THX), [docs/adr/](docs/adr/) (decisiones y sus porqués), [CHANGELOG.md](CHANGELOG.md).
-
-## Comandos
+## Commands
 
 ```
-cargo fmt --check                          # formato (rustfmt.toml: 120 columnas)
-cargo clippy --all-targets -- -D warnings  # sin avisos
-cargo test                                 # pruebas
-node --check ui/app.js                     # sintaxis de la página
-cargo build --release --target x86_64-pc-windows-gnu   # comprobar Windows desde Linux
-cargo run -- --demo                        # panel con un headset simulado
+cargo fmt --check                          # format (rustfmt.toml: 120 columns)
+cargo clippy --all-targets -- -D warnings  # no warnings
+cargo test                                 # tests
+node --check ui/app.js && node --check ui/demo.js
+cargo build --release                      # on Linux add --target x86_64-pc-windows-gnu
+cargo run -- --demo                        # the panel with a simulated headset
 ```
 
-En Linux hacen falta `libwebkit2gtk-4.1-dev` (panel) y, para compilar a Windows, el target `x86_64-pc-windows-gnu` con `mingw-w64`. La página se puede abrir sola en un navegador (`ui/index.html`, carga `ui/demo.js`).
+On Linux you need `libwebkit2gtk-4.1-dev` (panel) and, to build for Windows, the `x86_64-pc-windows-gnu` target with `mingw-w64`. The page can be opened alone in a browser (`ui/index.html` loads `ui/demo.js`; `#mic`, `#settings`… open a tab).
 
-## Reglas clave
+## Key rules
 
-- **Idiomas:** textos de la interfaz, documentación y mensajes al usuario en español; código, comentarios, commits y nombres en inglés.
-- **Nunca escribir al headset sin verificar:** toda secuencia nueva sigue lo capturado de Synapse / OpenRazer, pasa por el candado del bus (ver `device.rs`) y se confirma leyendo el estado cuando el firmware lo permite.
-- **Distinguir lo verificado en hardware de lo que no.** Nada se marca "funciona" en ESTADO.md sin prueba en el headset real; lo demás es "sin confirmar".
-- **Cada cambio actualiza la documentación:** ESTADO.md siempre, CHANGELOG.md si el usuario lo nota, ARQUITECTURA.md si cambia la estructura, un ADR si es una decisión difícil de revertir.
-- **Nada de archivos de Razer/THX en el repo** (DLL, drivers, instaladores): solo se documenta cómo obtenerlos.
-- **Antes de subir:** formato, clippy, pruebas y compilación para Windows en verde.
+- **Language:** everything in English: interface, docs, logs, code, comments, commits.
+- **Never write to a headset without a verified source:** every new sequence follows what was captured from Synapse or verified by OpenRazer, goes through the bus lock (see `device.rs`) and is read back when the firmware allows. Unsupported models get read-only diagnostics only.
+- **Tell verified-on-hardware apart from the rest.** Nothing is marked ✅ in STATUS.md without a test on a real headset.
+- **Every change updates the docs:** STATUS.md always, CHANGELOG.md if users notice, ARCHITECTURE.md if the structure changes, an ADR for a decision that is hard to undo.
+- **No Razer or THX files in the repo** (DLLs, drivers, installers). THX's installers live in their own repository ([ADR 0009](docs/adr/0009-thx-installer-in-a-separate-repository.md)).
+- **Before pushing:** format, clippy, tests and the Windows build all green.

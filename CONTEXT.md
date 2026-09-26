@@ -1,85 +1,84 @@
-# Glosario
+# Glossary
 
-Términos del dominio de rzr. Úsalos igual en la interfaz, el código (su traducción entre paréntesis), los commits y la documentación. Si un término no está aquí o se usa con otro sentido, se aclara y se agrega antes de seguir.
+The words rzr uses, in the interface, the code, commits and docs. If a term is missing or used with another meaning, clarify it and add it here first.
 
-## El hardware
+## Hardware
 
-**Headset** (headset): los audífonos Razer BlackShark V2 Pro. Guarda sus propios ajustes (presets, curvas, sidetone, etc.) y los conserva sin rzr.
-_Evitar:_ "dispositivo" cuando se habla solo de los audífonos.
+**Headset**: the Razer BlackShark V2 Pro. It stores its own settings (presets, curves, mic monitoring…) and keeps them without rzr.
+_Avoid:_ "device" when you mean just the headset.
 
-**Dongle** (dongle): el receptor USB de 2.4 GHz. rzr le habla al dongle y el dongle reenvía al headset.
+**Model** (`HeadsetModel`): which headset the user has. Only **supported** models are ever sent a command; the others get read-only **diagnostics**. Today: BlackShark V2 Pro (2023, dongle `1532:0555`, supported), BlackShark V2 Pro (2020, dongle `1532:0528`) and "other".
 
-**Enlace** (link): la conexión inalámbrica entre el dongle y el headset. Puede estar caído aunque el dongle esté conectado.
+**Dongle**: the 2.4 GHz USB receiver. rzr talks to the dongle, which forwards to the headset.
 
-**Caída** (drop): un corte del enlace, con su hora y duración.
+**Link**: the wireless connection between dongle and headset. It can be down while the dongle is plugged in.
 
-## Hablar con el headset
+**Drop**: a link outage, with its time and duration (connection log).
 
-**Comando** (command): un mensaje de rzr al headset. Es una **consulta** (lee un valor) o una **escritura** (cambia un valor).
+## Talking to the headset
 
-**Evento** (event): un mensaje que el headset envía por su cuenta, sin que se lo pidan: cambio de enlace, batería, botón EQ, botón de silencio.
+**Command**: a message from rzr to the headset: a **query** (reads a value) or a **write** (changes one).
 
-**Secuencia** (sequence): la serie ordenada de comandos que hace falta para un cambio (por ejemplo, seleccionar un preset). El orden viene de Synapse y OpenRazer.
+**Event**: a message the headset sends on its own: link change, battery, EQ button, mute button.
 
-**Modo remoto** (remote mode): estado en el que el headset acepta comandos del PC. Se activa al empezar una secuencia.
+**Sequence**: the ordered commands a change needs (for example selecting a preset). The order comes from Synapse and OpenRazer.
 
-**Aplicar** (apply): enviar al headset todo lo que dice el perfil activo.
+**Remote mode**: the state in which the headset takes commands from the PC. Every sequence turns it on first.
 
-## Ecualizador
+**Apply**: send the headset everything the active profile says.
 
-**Curva** (curve): los 10 valores del ecualizador, de −5 a +5 dB, de 31 Hz a 16 kHz.
+**Diagnostics**: a read-only report for a model (USB descriptors, the events it sends, Windows audio), saved as a text file the user can send. It never writes a setting.
 
-**Preset** (preset): un ajuste del ecualizador guardado en el headset. Cada preset tiene su **ranura**.
-_Evitar:_ "preajuste" en el código (se usa solo en la interfaz, como sinónimo visible).
+## Equalizer
 
-**Ranura** (slot): el lugar del headset donde se guarda la curva de un preset. Juego, Película y Música tienen ranuras de fábrica que no se pueden cambiar; Personalizado y los Esports sí.
+**Curve**: the 10 EQ values, −5 to +5 dB, 31 Hz to 16 kHz.
 
-**Familia** (family): el grupo al que pertenece un preset. **Estándar**: Juego, Película, Música y Personalizado. **Esports**: Apex Legends, Call of Duty, CS2, Fortnite y Valorant. El headset recuerda un preset por familia.
+**Preset**: an EQ setting stored in the headset. Each one has a **slot**.
 
-**Selector** (selector): el número con que el headset identifica cada preset.
+**Slot**: where the headset stores a preset's curve. Game, Movie and Music have factory slots that can't change; Custom and the esports presets can.
 
-**Personalizado** (custom): el preset cuya curva define el usuario.
+**Family**: the group a preset belongs to. **Standard**: Game, Movie, Music and Custom. **Esports**: Apex Legends, Call of Duty, CS2, Fortnite and Valorant. The headset remembers one preset per family.
 
-**Método de envío del EQ** (EQ method): la variante de secuencia que usa rzr para que una curva nueva se oiga. La elige la prueba guiada.
+**Selector**: the number the headset identifies a preset by.
 
-## Ajustes del headset
+**Custom**: the preset whose curve the user draws.
 
-**Sidetone** (sidetone): escuchar tu propia voz por los audífonos. En la interfaz: "Monitoreo de micrófono".
+## Headset settings
 
-**Mejoras del micrófono** (mic enhancements): EQ del micrófono, normalización de volumen, claridad vocal, reducción de ruido y puerta de voz. Las hace el efecto de micrófono de THX, no el headset; se guardan en el perfil.
+**Mic monitoring** (sidetone): hearing your own voice in the headset.
 
-**Puerta de voz** (voice gate): corta lo que el micrófono capta por debajo de un umbral en dB (−40 a −20). En la interfaz: "Sensibilidad".
+**Mic enhancements**: microphone EQ, volume normalization, vocal clarity, noise reduction and voice gate. THX's microphone effect does them, not the headset; they're stored in the profile.
 
-**No molestar** (dnd): bloquea las llamadas del celular por Bluetooth mientras se usa el dongle.
+**Voice gate**: cuts out what the microphone picks up below a threshold in dB (−40 to −20).
 
-**Apagado automático** (auto off): minutos sin uso tras los que el headset se apaga (15 a 60).
+**Do Not Disturb** (`dnd`): blocks phone calls over Bluetooth while the dongle is in use.
+
+**Auto power-off** (`auto_off`): minutes without use before the headset turns off (15 to 60).
 
 ## rzr
 
-**Perfil** (profile): un conjunto con nombre de todos los ajustes del headset. Hay un **perfil activo**.
+**Profile**: a named set of all headset settings. One is the **active profile**.
 
-**Panel** (panel): la ventana de rzr.
+**Panel**: rzr's window.
 
-**Proceso en segundo plano** (watcher): rzr corriendo sin ventana (`--silent --watch`), que aplica el perfil cada vez que el headset se conecta.
+**Background watcher**: rzr running without a window (`--silent --watch`), applying the profile whenever the headset connects.
 
-**Prueba guiada** (guided test, wizard): el asistente que envía curvas de prueba y pregunta al usuario si oye el cambio, para averiguar qué método de envío del EQ funciona.
+**Capture**: a guided session of `tools/capture-synapse.ps1` that records what Synapse sends at each step.
 
-**Captura** (capture): una sesión de `tools/capturar-synapse.ps1` que registra qué hace Synapse (o Windows) en cada paso.
+## Windows and THX
 
-## Windows y THX
+**Audio enhancements**: the effects Windows applies to an audio device. If they're off, no effect (THX included) runs.
 
-**Mejoras de audio** (audio enhancements): los efectos que Windows aplica a un dispositivo de audio. Si están desactivadas, ningún efecto (tampoco THX) se aplica.
+**Audio effect** (APO): a component that processes sound inside Windows, not in the headset. THX Spatial Audio is one.
 
-**Efecto de audio** (APO): un componente que procesa el sonido dentro de Windows, no en el headset. THX Spatial Audio es uno.
+**THX**: the audio effect Synapse installs for this headset. It does Bass Boost, Sound Normalization, Voice Clarity, spatial sound and a software EQ. Not part of the headset.
+_Avoid:_ "THX driver" for its settings; the driver is just the package that installs it.
 
-**Motor THX** (THX): el efecto de audio que instala Synapse. Hace Bass Boost, Normalización, Claridad de voz y el sonido espacial. No es parte del headset.
-_Evitar:_ "driver de THX" para referirse a sus ajustes; el driver es solo el paquete que lo instala.
+**Windows Sonic**: Windows' own spatial sound. It clashes with THX.
 
-**Windows Sonic** (Windows Sonic): el sonido espacial propio de Windows. Choca con THX.
+**THX preset**: a preset of THX's software EQ: `Game Mode`, `Cinema Mode`, `Music Mode` or `Custom`. Not the same as the headset's preset, although Synapse (and rzr) pick both together: Game, Movie and Music have their own, while Custom and the esports presets use `Custom` with their curve.
+_Avoid:_ plain "preset" when talking about THX.
 
-**Preset de THX** (THX preset): un ajuste del ecualizador por software de THX: `Game Mode`, `Cinema Mode`, `Music Mode` o `Custom`. Es distinto del preset del headset, aunque Synapse (y rzr) eligen los dos a la vez: Juego, Película y Música tienen el suyo, y Personalizado y los Esports usan `Custom` con su curva.
-_Evitar:_ decir solo "preset" cuando se habla de THX.
+**THX state**: the JSON with all of THX's output settings (spatial, Bass Boost, normalization, voice clarity, THX preset, curve), stored in the registry of the headset's output.
 
-**Estado de THX** (THX state): el JSON con todos los ajustes del motor THX (espacial, Bass Boost, normalización, claridad de voz, preset de THX, curva) que queda en el registro de la salida de los audífonos.
-
-**Servicio de THX** (THX service): `VSSrv.exe`, instalado con el paquete de driver de THX. Recibe los cambios (Synapse por ZeroMQ, rzr por COM) y guarda el estado de THX. No es un servicio de Razer.
+**THX service**: `VSSrv.exe`, installed with the THX driver package. It takes changes (Synapse over ZeroMQ, rzr over COM and ZeroMQ) and stores the THX state. Not a Razer service.
