@@ -1,5 +1,5 @@
-/// Log of headset link drops, kept next to the config as conexion.log, to
-/// help pin down intermittent disconnects.
+//! Log of headset link drops, kept next to the config as connection.log, to
+//! help pin down intermittent disconnects.
 
 use std::fs::OpenOptions;
 use std::io::Write;
@@ -12,12 +12,12 @@ use crate::config::Config;
 const MAX_BYTES: u64 = 256 * 1024;
 
 pub fn path() -> PathBuf {
-    Config::path().with_file_name("conexion.log")
+    Config::path().with_file_name("connection.log")
 }
 
 /// Tracks the link state and writes one line per change.
 pub struct ConnLog {
-    /// Who is logging ("panel" or "segundo plano"), shown on each line.
+    /// Who is logging ("panel" or "background"), shown on each line.
     source: &'static str,
     state: Option<bool>,
     down_since: Option<Instant>,
@@ -37,17 +37,17 @@ impl ConnLog {
         let first = self.state.is_none();
         self.state = Some(connected);
         let text = match (connected, first) {
-            (true, true) => "Headset conectado (inicio del registro)".to_string(),
+            (true, true) => "Headset connected (log started)".to_string(),
             (true, false) => match self.down_since.take() {
-                Some(t) => format!("Headset RECONECTADO tras {:.1} s", t.elapsed().as_secs_f32()),
-                None => "Headset conectado".to_string(),
+                Some(t) => format!("Headset RECONNECTED after {:.1} s", t.elapsed().as_secs_f32()),
+                None => "Headset connected".to_string(),
             },
             (false, _) => {
                 self.down_since = Some(Instant::now());
                 if first {
-                    "Headset no conectado (inicio del registro)".to_string()
+                    "Headset not connected (log started)".to_string()
                 } else {
-                    "Headset DESCONECTADO".to_string()
+                    "Headset DISCONNECTED".to_string()
                 }
             }
         };
@@ -82,20 +82,14 @@ fn trim(path: &PathBuf) {
 
 /// The last `n` lines, newest first.
 pub fn recent(n: usize) -> Vec<String> {
-    std::fs::read_to_string(path())
-        .map(|t| t.lines().rev().take(n).map(str::to_string).collect())
-        .unwrap_or_default()
+    std::fs::read_to_string(path()).map(|t| t.lines().rev().take(n).map(str::to_string).collect()).unwrap_or_default()
 }
 
 /// Drops logged today.
 pub fn drops_today() -> usize {
     let today = chrono::Local::now().format("%Y-%m-%d").to_string();
     std::fs::read_to_string(path())
-        .map(|t| {
-            t.lines()
-                .filter(|l| l.starts_with(&today) && l.contains("DESCONECTADO"))
-                .count()
-        })
+        .map(|t| t.lines().filter(|l| l.starts_with(&today) && l.contains("DISCONNECTED")).count())
         .unwrap_or(0)
 }
 
@@ -110,17 +104,17 @@ mod tests {
         std::env::remove_var("APPDATA");
 
         let mut log = ConnLog::new("test");
-        log.update(true, "inicio");
-        log.update(true, "repetido"); // no change, not written
-        log.update(false, "aviso del headset");
+        log.update(true, "start");
+        log.update(true, "again"); // no change, not written
+        log.update(false, "headset event");
         std::thread::sleep(std::time::Duration::from_millis(20));
-        log.update(true, "aviso del headset");
+        log.update(true, "headset event");
 
         let lines = recent(10);
         assert_eq!(lines.len(), 3, "{lines:?}");
-        assert!(lines[0].contains("RECONECTADO tras"));
-        assert!(lines[1].contains("DESCONECTADO"));
-        assert!(lines[2].contains("inicio del registro"));
+        assert!(lines[0].contains("RECONNECTED after"));
+        assert!(lines[1].contains("DISCONNECTED"));
+        assert!(lines[2].contains("log started"));
         assert_eq!(drops_today(), 1);
         let _ = std::fs::remove_dir_all(dir);
     }

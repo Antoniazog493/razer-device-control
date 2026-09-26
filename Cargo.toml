@@ -2,22 +2,26 @@
 name = "rzr"
 version = "0.2.0"
 edition = "2021"
-description = "Razer BlackShark V2 Pro control panel — replaces Razer Synapse for headset settings"
+description = "Lightweight control panel for the Razer BlackShark V2 Pro that replaces Razer Synapse"
 license = "MIT"
+repository = "https://github.com/Antoniazog493/razer-device-control"
+readme = "README.md"
 
 [dependencies]
-eframe = { version = "0.36", default-features = false, features = ["default_fonts", "glow", "wgpu_no_default_features", "x11"] }
+# Panel: a web page (ui/) in the system WebView (WebView2 on Windows).
+wry = { version = "0.57", default-features = false, features = ["os-webview"] }
+tao = { version = "0.37", default-features = false, features = ["rwh_06"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
 
 [target.'cfg(windows)'.dependencies]
-# Panel drawn with Direct3D 12 only (OpenGL via glow is the fallback).
-wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "dx12", "wgsl"] }
 hidapi = "2.6"
 winreg = "0.55"
-rfd = { version = "0.15", default-features = false }
+# Already pulled in by `windows`; named here because its `interface` macro
+# (the THX service's COM interface, src/thx.rs) refers to it by name.
+windows-core = "0.62"
 windows = { version = "0.62", features = [
     "Win32_Devices_FunctionDiscovery",
     "Win32_Foundation",
@@ -27,14 +31,18 @@ windows = { version = "0.62", features = [
     "Win32_System_Com_StructuredStorage",
     "Win32_System_Variant",
     "Win32_UI_Shell_PropertiesSystem",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 
-# Non-Windows builds exist for development; pure-Rust hidraw backend.
+# Non-Windows builds exist for development; pure-Rust hidraw backend and
+# WebKitGTK (libwebkit2gtk-4.1-dev) for the panel, on X11.
 [target.'cfg(not(windows))'.dependencies]
-wgpu = { version = "30", default-features = false, features = ["std", "parking_lot", "vulkan", "gles", "wgsl"] }
+wry = { version = "0.57", default-features = false, features = ["os-webview", "x11"] }
+tao = { version = "0.37", default-features = false, features = ["rwh_06", "x11"] }
 hidapi = { version = "2.6", default-features = false, features = ["linux-native-basic-udev"] }
 
 [profile.release]
 opt-level = "s"
 lto = true
 strip = true
+codegen-units = 1

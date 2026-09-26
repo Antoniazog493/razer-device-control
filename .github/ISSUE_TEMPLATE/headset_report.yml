@@ -1,0 +1,46 @@
+name: Headset report
+description: Help add a headset rzr doesn't support yet, with its diagnostics report.
+title: "Headset report: "
+labels: ["new headset"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks! In rzr, go to **Settings › Headset model**, pick your model (or "Other Razer headset"), then **Settings › Diagnostics › Run diagnostics** and use the headset while it listens. The report has no serial numbers or personal paths. See [docs/NEW-HEADSETS.md](https://github.com/Antoniazog493/razer-device-control/blob/main/docs/NEW-HEADSETS.md).
+  - type: input
+    id: model
+    attributes:
+      label: Headset
+      description: The exact name on the box or in Synapse, and the product number on the label (RZ04-…).
+      placeholder: Razer BlackShark V2 Pro (2020), RZ04-0322
+    validations:
+      required: true
+  - type: dropdown
+    id: connection
+    attributes:
+      label: How it connects
+      options:
+        - 2.4 GHz dongle
+        - Bluetooth
+        - USB cable
+        - 3.5 mm jack
+        - Several of these
+    validations:
+      required: true
+  - type: textarea
+    id: report
+    attributes:
+      label: Diagnostics report
+      description: Drag the rzr-diagnostics-….txt file here, or paste its contents.
+    validations:
+      required: true
+  - type: textarea
+    id: synapse
+    attributes:
+      label: Synapse capture (optional)
+      description: The rzr-capture.zip from tools/capture-synapse.ps1. Check it for personal data first.
+  - type: textarea
+    id: notes
+    attributes:
+      label: Anything else
+      description: Which Synapse features your headset has (EQ, mic monitoring, THX…), what you pressed while rzr listened.

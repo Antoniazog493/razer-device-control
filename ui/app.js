@@ -1,0 +1,613 @@
+// rzr panel. rzr calls rzr.state(state) whenever something changes and
+// rzr.toast(text, error) for notifications; the page answers with
+// send(cmd, args), which reaches rzr as {"cmd": cmd, ...args}. The state's
+// shape is App::view() in src/gui/mod.rs; the commands are its Msg enum.
+"use strict";
+
+let S = null; // latest state from rzr
+let tab = "sound";
+let dialog = null; // "rename" | "delete" | null
+
+const $ = (sel, root = document) => root.querySelector(sel);
+const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
+
+function send(cmd, args = {}) {
+  window.ipc.postMessage(JSON.stringify({ cmd, ...args }));
+}
+
+/** Value at a dotted path in the state ("audio.out.name"). */
+function get(path, obj = S) {
+  return path.split(".").reduce((o, k) => (o == null ? undefined : o[k]), obj);
+}
+
+/** "a.b" is truthy, "!a.b" is falsy. Empty lists count as false. */
+function test(expr) {
+  const neg = expr.startsWith("!");
+  const v = get(neg ? expr.slice(1) : expr);
+  const t = Array.isArray(v) ? v.length > 0 : !!v;
+  return neg ? !t : t;
+}
+
+function display(v) {
+  if (v === true) return "Yes";
+  if (v === false) return "No";
+  return v == null || v === "" ? "—" : String(v);
+}
+
+function esc(text) {
+  return String(text).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+}
+
+/** Extra arguments for an element's command: data-args='{"effect": "voice_gate"}'. */
+function args(el) {
+  return el.dataset.args ? JSON.parse(el.dataset.args) : {};
+}
+
+function setChecked(el, on) {
+  el.setAttribute("role", "switch");
+  el.setAttribute("aria-checked", on ? "true" : "false");
+}
+
+window.rzr = {
+  state(state) {
+    S = state;
+    render();
+  },
+  toast,
+};
+
+// ------------------------------------------------------------------ render
+
+function render() {
+  if (!S) return;
+  for (const el of $$("[data-text]")) el.textContent = display(get(el.dataset.text));
+  for (const el of $$("[data-show]")) el.hidden = !test(el.dataset.show);
+  for (const el of $$("[data-level-from]")) el.setAttribute("data-level", get(el.dataset.levelFrom) ?? "");
+  for (const el of $$(".toggle[data-toggle]")) setChecked(el, !!get(el.dataset.toggle));
+  for (const el of $$(".slider[data-slider]")) {
+    setSlider(el, get(el.dataset.slider), !el.dataset.enabled || test(el.dataset.enabled));
+  }
+
+  renderTabs();
+  renderProfiles();
+  renderBattery();
+  renderEq();
+  renderMic();
+  renderAudio();
+  renderThx();
+  renderPower();
+  renderSettings();
+  renderDialog();
+}
+
+const TABS = ["sound", "enhancement", "mic", "power", "settings"];
+
+function renderTabs() {
+  for (const b of $$("[data-tab]")) b.setAttribute("aria-selected", b.dataset.tab === tab ? "true" : "false");
+  for (const p of $$("[data-page]")) p.hidden = p.dataset.page !== tab;
+  // Sizes are only known once the page is visible.
+  for (const el of $$(`[data-page="${tab}"] .slider`)) paintSlider(el);
+  for (const g of Object.values(graphs)) drawGraph(g);
+}
+
+function setTab(name) {
+  if (!TABS.includes(name)) return;
+  tab = name;
+  $("main").scrollTop = 0;
+  try { localStorage.setItem("rzr.tab", name); } catch (_) {}
+  renderTabs();
+}
+
+/** Rebuild a <select>'s options only when they changed (keeps it open otherwise). */
+function fillSelect(select, options, value) {
+  const key = JSON.stringify(options);
+  if (select.dataset.key !== key) {
+    select.dataset.key = key;
+    select.innerHTML = options.map(([v, label]) => `<option value="${esc(v)}">${esc(label)}</option>`).join("");
+  }
+  select.value = value;
+}
+
+function renderProfiles() {
+  fillSelect($("#profile"), S.profiles.map((name, i) => [i, name]), S.active);
+  $("#delete-profile").disabled = S.profiles.length < 2;
+}
+
+function renderBattery() {
+  const d = S.device;
+  const mini = $(".battery-mini");
+  $("#battery-text").textContent = d.battery == null ? "—" : `${d.charging ? "⚡ " : ""}${d.battery}%`;
+  $(".battery-fill", mini).style.width = `${d.battery ?? 0}%`;
+  mini.classList.toggle("charging", d.charging === true);
+  mini.classList.toggle("low", d.battery != null && d.battery <= 15);
+  mini.hidden = d.battery == null;
+}
+
+function renderAudio() {
+  for (const [flow, list] of [["out", "outputs"], ["in", "inputs"]]) {
+    const ep = S.audio[flow];
+    if (ep) {
+      setChecked($(`#${flow}-mute`), !ep.muted);
+      setSlider($(`#${flow}-volume`), ep.volume, !ep.muted);
+    }
+    // Shows Windows' current default; picking one switches it once.
+    const current = S.audio[list].find((d) => d.default);
+    const options = S.audio[list].map((d) => [d.id, d.name]);
+    if (!current) options.unshift(["", "(none)"]);
+    fillSelect($(`[data-devices="${flow}"]`), options, current ? current.id : "");
+  }
+  const m = S.device.mic_muted;
+  const state = $("#mic-state");
+  state.setAttribute("data-level", m === true ? "error" : m === false ? "ok" : "");
+  state.lastElementChild.textContent =
+    m === true ? "Muted with the headset's button" : m === false ? "On (headset's mute button)" : "Mute button state unknown";
+}
+
+/** THX switches and levels only work while its service answers and no change is pending. */
+function renderThx() {
+  const writable = !!(S.thx && S.thx.writable);
+  for (const el of $$(".toggle[data-thx]")) el.setAttribute("aria-disabled", writable ? "false" : "true");
+  for (const el of $$(".slider[data-thx]")) el.classList.toggle("locked", !writable);
+}
+
+function renderPower() {
+  const d = S.device;
+  $("#battery-percent").textContent = d.battery == null ? "—" : `${d.battery}%`;
+  const state = $("#battery-state");
+  const [text, level] = !d.headset ? ["Headset not connected", ""] : d.charging ? ["⚡ Charging", "ok"] : ["On battery", ""];
+  state.textContent = text;
+  state.setAttribute("data-level", level);
+  const meter = $("#battery-meter");
+  meter.hidden = d.battery == null;
+  meter.firstElementChild.style.width = `${d.battery ?? 0}%`;
+  meter.classList.toggle("low", d.battery != null && d.battery <= 15);
+
+  const n = S.connlog.drops_today;
+  const drops = $("#drops");
+  drops.textContent = n === 0 ? "No drops today" : n === 1 ? "1 drop today" : `${n} drops today`;
+  drops.setAttribute("data-level", n === 0 ? "ok" : "warn");
+  const lines = S.connlog.lines;
+  $("#connlog").innerHTML = lines.length
+    ? lines
+        .map((l) => `<span class="${l.includes("DISCONNECTED") ? "down" : l.includes("RECONNECTED") ? "up" : ""}">${esc(l)}</span>`)
+        .join("\n")
+    : "Nothing logged yet.";
+}
+
+function renderSettings() {
+  const box = $("#models");
+  const key = JSON.stringify(S.model.options);
+  if (box.dataset.key !== key) {
+    box.dataset.key = key;
+    box.innerHTML = S.model.options
+      .map(
+        (m) => `<button class="model" role="radio" data-model="${esc(m.id)}">
+          <span class="model-name">${esc(m.name)}</span>
+          <span class="tag${m.supported ? " ok" : ""}">${m.supported ? "Supported" : "Diagnostics only"}</span>
+          <span class="model-hint">${esc(m.hint)}</span>
+        </button>`,
+      )
+      .join("");
+  }
+  for (const b of $$("[data-model]", box)) b.setAttribute("aria-checked", b.dataset.model === S.model.id ? "true" : "false");
+
+  const d = S.diag;
+  $("#diag-run").disabled = d.running;
+  $("#diag-summary").innerHTML = (d.summary || []).map((l) => `<li>${esc(l)}</li>`).join("");
+}
+
+// ------------------------------------------------------------------ sliders
+
+/**
+ * Build a slider inside <div class="slider">. Attributes: data-min,
+ * data-max, data-step, data-unit (appended to the value), data-labels
+ * ("left,right"). With data-slider/data-send it's bound to the state and
+ * sends {cmd, ...data-args, value, commit: true} when released.
+ */
+function makeSlider(el) {
+  const [left, right] = (el.dataset.labels || ",").split(",");
+  el.innerHTML = `<span class="bubble"></span><input type="range"><div class="labels"><span>${esc(left)}</span><span>${esc(right)}</span></div>`;
+  const input = $("input", el);
+  input.min = el.dataset.min ?? 0;
+  input.max = el.dataset.max ?? 100;
+  input.step = el.dataset.step ?? 1;
+  input.addEventListener("pointerdown", () => (el.dataset.active = "1"));
+  for (const end of ["pointerup", "pointercancel", "blur"]) input.addEventListener(end, () => delete el.dataset.active);
+  input.addEventListener("input", () => {
+    el.dataset.active = "1";
+    paintSlider(el);
+  });
+  input.addEventListener("change", () => {
+    delete el.dataset.active;
+    if (el.dataset.send) send(el.dataset.send, { ...args(el), value: Number(input.value), commit: true });
+  });
+}
+
+function paintSlider(el) {
+  const input = $("input", el);
+  const t = (input.value - input.min) / (input.max - input.min || 1);
+  input.style.setProperty("--fill", `${t * 100}%`);
+  const bubble = $(".bubble", el);
+  bubble.textContent = `${input.value}${el.dataset.unit ?? ""}`;
+  // Follow the knob (7px = half its width), without leaving the track.
+  const x = 7 + t * (input.clientWidth - 14);
+  bubble.style.left = `${Math.min(Math.max(x, bubble.offsetWidth / 2), el.clientWidth - bubble.offsetWidth / 2)}px`;
+}
+
+function setSlider(el, value, enabled) {
+  el.classList.toggle("disabled", !enabled);
+  const input = $("input", el);
+  // Leave it alone while the user is dragging it.
+  if (!el.dataset.active && value != null) input.value = value;
+  paintSlider(el);
+}
+
+// ----------------------------------------------------------------- equalizer
+
+const REGIONS = [
+  [0, 0, "Sub-bass"],
+  [1, 2, "Bass"],
+  [3, 3, "Low mids"],
+  [4, 5, "Mids"],
+  [6, 7, "High mids"],
+  [8, 9, "Treble"],
+];
+
+/** EQ graphs by name, made in setup(): the headset's and the microphone's. */
+const graphs = {};
+
+/**
+ * An EQ graph drawn in `box`. When a drag on it ends it sends `cmd` with
+ * {bands}. Its curve, range and whether it can be edited come from setGraph().
+ */
+function makeGraph(box, cmd, height) {
+  const g = {
+    box, cmd, height,
+    bands: [],
+    min: -5, max: 5,
+    editable: false,
+    drag: null, // band being dragged
+    hover: null,
+    // After a drag, states for the same preset may still carry the old curve
+    // until rzr has handled our change: ignore those for a moment.
+    hold: 0,
+    holdKey: null,
+    key: null,
+    plot: null,
+  };
+  const bandAt = (clientX) => {
+    const r = box.getBoundingClientRect();
+    const i = Math.floor((clientX - r.left - g.plot.l) / g.plot.dx);
+    return Math.max(0, Math.min(g.bands.length - 1, i));
+  };
+  const dbAt = (clientY) => {
+    const r = box.getBoundingClientRect();
+    const t = (clientY - r.top - g.plot.t) / (g.plot.b - g.plot.t);
+    return Math.round(Math.max(g.min, Math.min(g.max, g.max - t * (g.max - g.min))));
+  };
+  box.addEventListener("pointerdown", (e) => {
+    if (!g.editable || !g.plot || e.button !== 0) return;
+    box.setPointerCapture(e.pointerId);
+    g.drag = bandAt(e.clientX);
+    g.bands[g.drag] = dbAt(e.clientY);
+    drawGraph(g);
+  });
+  box.addEventListener("pointermove", (e) => {
+    if (!g.plot) return;
+    if (g.drag !== null) {
+      const db = dbAt(e.clientY);
+      if (db !== g.bands[g.drag]) {
+        g.bands[g.drag] = db;
+        drawGraph(g);
+      }
+      return;
+    }
+    const r = box.getBoundingClientRect();
+    const inside = e.clientY - r.top <= g.plot.b + 60;
+    const hover = inside ? bandAt(e.clientX) : null;
+    if (hover !== g.hover) {
+      g.hover = hover;
+      drawGraph(g);
+    }
+  });
+  const release = () => {
+    if (g.drag === null) return;
+    g.drag = null;
+    g.hold = Date.now() + 1000;
+    g.holdKey = g.key;
+    send(g.cmd, { bands: g.bands });
+    drawGraph(g);
+  };
+  box.addEventListener("pointerup", release);
+  box.addEventListener("pointercancel", release);
+  box.addEventListener("pointerleave", () => {
+    if (g.drag === null && g.hover !== null) {
+      g.hover = null;
+      drawGraph(g);
+    }
+  });
+  return g;
+}
+
+/** New state for a graph. `key` names the preset shown (for the hold after a drag). */
+function setGraph(g, { curve, editable, key, min, max }) {
+  Object.assign(g, { editable, key, min, max });
+  g.box.classList.toggle("editable", editable);
+  const same = JSON.stringify(curve) === JSON.stringify(g.bands);
+  const held = key === g.holdKey && Date.now() < g.hold && !same;
+  if (g.drag === null && !held) g.bands = [...curve];
+  drawGraph(g);
+}
+
+function renderEq() {
+  const p = S.profile;
+  for (const b of $$("#eq-mode button")) b.setAttribute("aria-pressed", b.dataset.mode === p.eq_mode ? "true" : "false");
+  fillButtons($("#presets"), "preset", S.presets[p.eq_mode], p.preset);
+  setGraph(graphs.eq, { curve: p.curve, editable: p.editable, key: p.preset, min: S.eq.min, max: S.eq.max });
+}
+
+function renderMic() {
+  const m = S.mic;
+  fillButtons($("#mic-presets"), "mic-preset", m.presets, m.eq_preset);
+  setGraph(graphs.mic, { curve: m.curve, editable: m.editable, key: m.eq_preset, min: m.min, max: m.max });
+}
+
+/** Preset buttons (data-<attr>="id"), rebuilt only when the list changes. */
+function fillButtons(box, attr, list, selected) {
+  const key = JSON.stringify(list);
+  if (box.dataset.key !== key) {
+    box.dataset.key = key;
+    box.innerHTML = list.map((x) => `<button data-${attr}="${x.id}">${esc(x.label)}</button>`).join("");
+  }
+  for (const b of $$("button", box)) {
+    b.setAttribute("aria-pressed", b.getAttribute(`data-${attr}`) === selected ? "true" : "false");
+  }
+}
+
+function drawGraph(g) {
+  const box = g.box;
+  const w = box.clientWidth;
+  const h = g.height;
+  if (!S || !w || !g.bands.length) return;
+  const { min, max } = g;
+  const freqs = S.eq.freqs;
+  const n = g.bands.length;
+  const plot = { l: 4, r: w - 64, t: 34, b: h - 70 };
+  const dx = (plot.r - plot.l) / n;
+  g.plot = { ...plot, dx };
+  const x = (i) => plot.l + dx * (i + 0.5);
+  const y = (db) => plot.t + ((max - Math.max(min, Math.min(max, db))) / (max - min)) * (plot.b - plot.t);
+  const lit = g.drag ?? g.hover;
+
+  // The signature: the curve's area, fading from the accent to nothing at 0 dB.
+  const id = `fill-${box.id}`;
+  let svg = `<defs><linearGradient id="${id}" x1="0" y1="${plot.t}" x2="0" y2="${plot.b}" gradientUnits="userSpaceOnUse">
+    <stop offset="0" class="fill-top"/><stop offset="${(y(0) - plot.t) / (plot.b - plot.t)}" class="fill-mid"/><stop offset="1" class="fill-top"/>
+  </linearGradient></defs>`;
+  for (const db of [max, 0, min]) {
+    svg += `<text class="scale" x="${plot.r + 22}" y="${y(db)}">${db > 0 ? "+" : ""}${db} dB</text>`;
+  }
+  for (let i = 0; i < n; i++) {
+    const on = lit === i ? " lit" : "";
+    svg += `<line class="band-line${on}" x1="${x(i)}" x2="${x(i)}" y1="${plot.t}" y2="${plot.b}"/>`;
+    svg += `<circle class="zero" cx="${x(i)}" cy="${y(0)}" r="2"/>`;
+    svg += `<text class="freq${on}" x="${x(i)}" y="${plot.b + 18}">${freqs[i]}</text>`;
+  }
+  const points = g.bands.map((db, i) => `${x(i)},${y(db)}`).join(" ");
+  svg += `<polygon class="area" fill="url(#${id})" points="${x(0)},${y(0)} ${points} ${x(n - 1)},${y(0)}"/>`;
+  svg += `<line class="zero-line" x1="${plot.l}" x2="${plot.r}" y1="${y(0)}" y2="${y(0)}"/>`;
+  svg += `<polyline class="curve" points="${points}"/>`;
+  g.bands.forEach((db, i) => {
+    svg += `<circle class="node" cx="${x(i)}" cy="${y(db)}" r="${g.drag === i ? 9 : g.editable ? 7 : 6}"/>`;
+  });
+  if (lit !== null && lit !== undefined) {
+    const v = g.bands[lit];
+    const label = `${v > 0 ? "+" : ""}${v} dB`;
+    const bw = label.length * 7 + 12;
+    const cy = y(v) - 22;
+    svg += `<g class="bubble"><rect x="${x(lit) - bw / 2}" y="${cy - 10}" width="${bw}" height="20" rx="5"/><text x="${x(lit)}" y="${cy}">${label}</text></g>`;
+  }
+  const barTop = plot.b + 36;
+  for (const [a, b, label] of REGIONS) {
+    const on = lit != null && lit >= a && lit <= b ? " lit" : "";
+    const left = x(a) - dx / 2 + 1;
+    const width = x(b) + dx / 2 - 1 - left;
+    svg += `<g class="region${on}"><rect x="${left}" y="${barTop}" width="${width}" height="24" rx="5"/><text x="${left + width / 2}" y="${barTop + 12}">${label}</text></g>`;
+  }
+  box.innerHTML = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${w} ${h}">${svg}</svg>`;
+}
+
+function setupGraphs() {
+  graphs.eq = makeGraph($("#eq"), "eq_bands", 320);
+  graphs.mic = makeGraph($("#mic-eq"), "mic_eq_bands", 280);
+  new ResizeObserver(() => {
+    for (const g of Object.values(graphs)) drawGraph(g);
+    for (const el of $$(".slider")) paintSlider(el);
+  }).observe($("main"));
+}
+
+// ------------------------------------------------------------------ dialogs
+
+function renderDialog() {
+  const modal = $("#dialog");
+  const box = $(".dialog", modal);
+  const kind = dialog;
+  modal.hidden = !kind;
+  if (!kind) {
+    box.dataset.kind = "";
+    return;
+  }
+  if (box.dataset.kind !== kind) {
+    // Local dialogs are built once, so typing isn't interrupted.
+    box.className = "dialog small";
+    if (kind === "rename") {
+      box.innerHTML = `<h2>Rename profile</h2>
+        <input type="text" id="rename-input" maxlength="60" value="${esc(S.profile.name)}">
+        <div class="actions"><button class="button primary" data-action="rename">Rename</button><button class="button" data-action="close">Cancel</button></div>`;
+      const input = $("#rename-input");
+      input.focus();
+      input.select();
+    } else {
+      box.innerHTML = `<h2>Delete profile</h2><p>Delete “${esc(S.profile.name)}”? This can't be undone.</p>
+        <div class="actions"><button class="button danger" data-action="delete">Delete</button><button class="button" data-action="close">Cancel</button></div>`;
+    }
+  }
+  box.dataset.kind = kind;
+}
+
+function openDialog(kind) {
+  dialog = kind;
+  closeMenu();
+  renderDialog();
+}
+
+function closeDialog() {
+  dialog = null;
+  renderDialog();
+}
+
+function closeMenu() {
+  $("#profile-menu").hidden = true;
+}
+
+// ------------------------------------------------------------ toasts, files
+
+function toast(text, error = false) {
+  const box = $("#toasts");
+  const el = document.createElement("div");
+  el.className = error ? "toast error" : "toast";
+  el.textContent = text;
+  box.append(el);
+  while (box.children.length > 4) box.firstElementChild.remove();
+  setTimeout(() => el.remove(), error ? 7000 : 4000);
+}
+
+async function importFiles(files) {
+  for (const file of files) {
+    if (!file.name.toLowerCase().endsWith(".synapse4")) {
+      toast(`${file.name} isn't a Synapse profile (.synapse4)`, true);
+      continue;
+    }
+    send("import", { name: file.name, text: await file.text() });
+  }
+}
+
+// ------------------------------------------------------------------- events
+
+function onClick(e) {
+  const t = e.target.closest("button, [data-open]");
+  if (!$("#profile-menu").hidden && !e.target.closest(".menu-wrap")) closeMenu();
+  if (!t || t.disabled) return;
+  const d = t.dataset;
+
+  if (t.matches(".toggle")) {
+    if (t.getAttribute("aria-disabled") === "true") return;
+    const on = t.getAttribute("aria-checked") !== "true";
+    setChecked(t, on);
+    if (d.toggle) send(d.send, { ...args(t), on });
+    else if (t.id === "out-mute" || t.id === "in-mute") {
+      const ep = S.audio[t.id.slice(0, -5)];
+      if (ep) send("mute", { id: ep.id, muted: !on });
+    }
+    return;
+  }
+  if (d.tab) return setTab(d.tab);
+  if (d.mode) return d.mode !== S.profile.eq_mode && send("eq_mode", { mode: d.mode });
+  if (d.preset) return d.preset !== S.profile.preset && send("preset", { preset: d.preset });
+  if (d.micPreset) return d.micPreset !== S.mic.eq_preset && send("mic_eq_preset", { preset: d.micPreset });
+  if (d.model) return d.model !== S.model.id && send("headset_model", { model: d.model });
+  if (t.id === "profile-menu-button") {
+    $("#profile-menu").hidden = !$("#profile-menu").hidden;
+    return;
+  }
+  if (d.dialog) return openDialog(d.dialog);
+  if (t.hasAttribute("data-import")) {
+    closeMenu();
+    return $("#import-file").click();
+  }
+  if (d.action === "rename") {
+    send("rename_profile", { name: $("#rename-input").value });
+    return closeDialog();
+  }
+  if (d.action === "delete") {
+    send("delete_profile");
+    return closeDialog();
+  }
+  if (d.action === "close") return closeDialog();
+  if (d.open) return send("open", { what: d.open });
+  if (d.send) {
+    closeMenu();
+    send(d.send);
+  }
+}
+
+function setup() {
+  try { tab = localStorage.getItem("rzr.tab") || tab; } catch (_) {}
+  const hash = location.hash.slice(1);
+  if (TABS.includes(hash)) tab = hash;
+  if (!TABS.includes(tab)) tab = "sound";
+  window.addEventListener("hashchange", () => setTab(location.hash.slice(1)));
+  for (const el of $$(".slider")) makeSlider(el);
+  setupGraphs();
+
+  document.addEventListener("click", onClick);
+  document.addEventListener("contextmenu", (e) => e.preventDefault());
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (dialog) closeDialog();
+      closeMenu();
+    } else if (e.key === "Enter" && e.target.id === "rename-input") {
+      send("rename_profile", { name: e.target.value });
+      closeDialog();
+    } else if (e.key === "F5" || (e.ctrlKey && e.key === "r")) {
+      location.reload();
+    }
+  });
+
+  $("#profile").addEventListener("change", (e) => send("select_profile", { index: Number(e.target.value) }));
+  for (const sel of $$("[data-devices]")) {
+    sel.addEventListener("change", () => send("default_device", { id: sel.value }));
+  }
+  for (const flow of ["out", "in"]) {
+    $(`#${flow}-volume input`).addEventListener("input", (e) => {
+      const ep = S && S.audio[flow];
+      if (ep) send("volume", { id: ep.id, value: Number(e.target.value) });
+    });
+  }
+
+  const file = $("#import-file");
+  file.addEventListener("change", () => {
+    importFiles([...file.files]);
+    file.value = "";
+  });
+  const hint = $("#drop-hint");
+  const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes("Files");
+  document.addEventListener("dragover", (e) => {
+    if (!hasFiles(e)) return;
+    e.preventDefault();
+    hint.hidden = false;
+  });
+  document.addEventListener("dragleave", (e) => {
+    if (!e.relatedTarget) hint.hidden = true;
+  });
+  document.addEventListener("drop", (e) => {
+    e.preventDefault();
+    hint.hidden = true;
+    importFiles([...(e.dataTransfer?.files || [])]);
+  });
+  renderTabs();
+}
+
+/** Outside rzr (the page opened in a browser): demo data from demo.js. */
+function loadDemo() {
+  return new Promise((resolve) => {
+    const s = document.createElement("script");
+    s.src = "demo.js";
+    s.onload = resolve;
+    s.onerror = () => (document.body.textContent = "demo.js is missing: open this page with rzr.");
+    document.head.append(s);
+  });
+}
+
+setup();
+(window.ipc ? Promise.resolve() : loadDemo()).then(() => send("ready"));

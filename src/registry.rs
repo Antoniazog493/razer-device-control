@@ -1,5 +1,5 @@
-/// Windows registry: migration of the pre-GUI settings (HKCU\SOFTWARE\rzr)
-/// and the "start with Windows" entry (HKCU\...\CurrentVersion\Run).
+//! Windows registry: migration of the pre-GUI settings (HKCU\SOFTWARE\rzr)
+//! and the "start with Windows" entry (HKCU\...\CurrentVersion\Run).
 
 use crate::config::Config;
 
@@ -9,9 +9,7 @@ pub fn legacy_config() -> Option<Config> {
     use winreg::enums::*;
     use winreg::RegKey;
 
-    let key = RegKey::predef(HKEY_CURRENT_USER)
-        .open_subkey("SOFTWARE\\rzr")
-        .ok()?;
+    let key = RegKey::predef(HKEY_CURRENT_USER).open_subkey("SOFTWARE\\rzr").ok()?;
     let mut cfg = Config::default();
 
     if let Ok(v) = key.get_value::<String, _>("eq_bands") {
@@ -22,14 +20,9 @@ pub fn legacy_config() -> Option<Config> {
     if let Ok(v) = key.get_value::<u32, _>("wait_timeout_ms") {
         cfg.wait_timeout_ms = v;
     }
-    if let Ok(v) = key.get_value::<String, _>("default_speaker") {
-        cfg.default_speaker = v;
-    }
-    if let Ok(v) = key.get_value::<String, _>("default_microphone") {
-        cfg.default_microphone = v;
-    }
     // "volume" was really the preset selector (255 = custom) and "enhancement"
-    // the preset-family flag, so neither carries over.
+    // the preset-family flag, so neither carries over. Nor do "default_speaker"
+    // and "default_microphone": rzr no longer changes Windows' default on its own.
     Some(cfg)
 }
 
@@ -61,10 +54,7 @@ const RUN_VALUE: &str = "rzr";
 pub fn autostart_enabled() -> bool {
     use winreg::enums::*;
     use winreg::RegKey;
-    RegKey::predef(HKEY_CURRENT_USER)
-        .open_subkey(RUN_KEY)
-        .and_then(|k| k.get_value::<String, _>(RUN_VALUE))
-        .is_ok()
+    RegKey::predef(HKEY_CURRENT_USER).open_subkey(RUN_KEY).and_then(|k| k.get_value::<String, _>(RUN_VALUE)).is_ok()
 }
 
 #[cfg(windows)]
@@ -73,17 +63,16 @@ pub fn set_autostart(enable: bool) -> Result<(), String> {
     use winreg::RegKey;
     let (key, _) = RegKey::predef(HKEY_CURRENT_USER)
         .create_subkey(RUN_KEY)
-        .map_err(|e| format!("No se pudo abrir el registro: {e}"))?;
+        .map_err(|e| format!("Could not open the registry: {e}"))?;
     if enable {
         let exe = std::env::current_exe().map_err(|e| e.to_string())?;
         let cmd = format!("\"{}\" --silent --watch", exe.display());
-        key.set_value(RUN_VALUE, &cmd)
-            .map_err(|e| format!("No se pudo escribir en el registro: {e}"))
+        key.set_value(RUN_VALUE, &cmd).map_err(|e| format!("Could not write to the registry: {e}"))
     } else {
         match key.delete_value(RUN_VALUE) {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-            Err(e) => Err(format!("No se pudo escribir en el registro: {e}")),
+            Err(e) => Err(format!("Could not write to the registry: {e}")),
         }
     }
 }
@@ -95,17 +84,14 @@ pub fn autostart_enabled() -> bool {
 
 #[cfg(not(windows))]
 pub fn set_autostart(_enable: bool) -> Result<(), String> {
-    Err("Solo disponible en Windows".to_string())
+    Err("Only available on Windows".to_string())
 }
 
 #[cfg(test)]
 mod tests {
     #[test]
     fn parses_legacy_bands() {
-        assert_eq!(
-            super::parse_eq_bands("1,-2,1,-3,1,-3,-5,2,2,3"),
-            Some([1, -2, 1, -3, 1, -3, -5, 2, 2, 3])
-        );
+        assert_eq!(super::parse_eq_bands("1,-2,1,-3,1,-3,-5,2,2,3"), Some([1, -2, 1, -3, 1, -3, -5, 2, 2, 3]));
         assert_eq!(super::parse_eq_bands("1,2"), None);
     }
 }

@@ -1,9 +1,11 @@
-/// Settings and profiles, stored as JSON in %APPDATA%\rzr\config.json
-/// (~/.config/rzr/config.json elsewhere).
+//! Settings and profiles, stored as JSON in %APPDATA%\rzr\config.json
+//! (~/.config/rzr/config.json elsewhere).
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
+use crate::mic::MicSettings;
+use crate::models::HeadsetModel;
 use crate::protocol::{self, EqPreset, EQ_BANDS};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -30,12 +32,14 @@ pub struct Profile {
     pub auto_off_enabled: bool,
     /// 15-60 minutes.
     pub auto_off_minutes: u8,
+    /// Microphone enhancements (THX, plus the EQ preset index on the headset).
+    pub mic: MicSettings,
 }
 
 impl Default for Profile {
     fn default() -> Self {
         Self {
-            name: "Predeterminado".to_string(),
+            name: "Default".to_string(),
             eq_mode: EqMode::Standard,
             standard_preset: EqPreset::Custom,
             esports_preset: EqPreset::ApexLegends,
@@ -45,6 +49,7 @@ impl Default for Profile {
             dnd: false,
             auto_off_enabled: false,
             auto_off_minutes: 15,
+            mic: MicSettings::default(),
         }
     }
 }
@@ -104,27 +109,13 @@ impl Profile {
             self.esports_preset = EqPreset::ApexLegends;
         }
         self.sidetone_volume = self.sidetone_volume.clamp(1, 100);
-        self.auto_off_minutes = self
-            .auto_off_minutes
-            .clamp(protocol::AUTO_OFF_MIN_MINUTES, protocol::AUTO_OFF_MAX_MINUTES);
+        self.auto_off_minutes =
+            self.auto_off_minutes.clamp(protocol::AUTO_OFF_MIN_MINUTES, protocol::AUTO_OFF_MAX_MINUTES);
         if self.name.trim().is_empty() {
-            self.name = "Perfil".to_string();
+            self.name = "Profile".to_string();
         }
+        self.mic.sanitize();
     }
-}
-
-/// How EQ changes are sent. The guided test in AJUSTES picks whichever one
-/// the user can actually hear.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "snake_case")]
-pub enum EqMethod {
-    /// Synapse/OpenRazer sequences with read-back verification.
-    Verified,
-    /// The first rzr release's sequence, sent twice, no read-back.
-    Original,
-    /// Verified write, then switch to another preset and back, so the
-    /// headset loads the freshly written curve (guided test, round 2).
-    Relatch,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -132,20 +123,10 @@ pub enum EqMethod {
 pub struct Config {
     pub profiles: Vec<Profile>,
     pub active: usize,
-    /// Windows endpoint IDs to make default on connect; empty = don't change.
-    pub default_speaker: String,
-    pub default_microphone: String,
+    /// The headset the user has; rzr only talks to fully supported models.
+    pub headset_model: HeadsetModel,
     /// How long `rzr apply` waits for the dongle.
     pub wait_timeout_ms: u32,
-    /// Send Synapse's startup frames (dongle query, 0x9E = 0) before a full
-    /// apply. Field name kept from earlier releases.
-    pub send_legacy_config: bool,
-    /// Value sent for "Speaker Preset EQ Status" (0x9E) in that sequence.
-    pub eq_status: u8,
-    pub eq_method: EqMethod,
-    /// Hand control back to the headset (remote mode off) after each
-    /// command, as OpenRazer does. The first rzr release never did.
-    pub release_remote: bool,
     /// Write debug.log (every HID frame and what the app was doing).
     pub debug_log: bool,
 }
@@ -155,13 +136,8 @@ impl Default for Config {
         Self {
             profiles: vec![Profile::default()],
             active: 0,
-            default_speaker: String::new(),
-            default_microphone: String::new(),
+            headset_model: HeadsetModel::default(),
             wait_timeout_ms: 5000,
-            send_legacy_config: true,
-            eq_status: 0,
-            eq_method: EqMethod::Verified,
-            release_remote: true,
             debug_log: false,
         }
     }
@@ -190,12 +166,12 @@ impl Config {
     pub fn save(&self) -> Result<(), String> {
         let path = Self::path();
         if let Some(dir) = path.parent() {
-            std::fs::create_dir_all(dir).map_err(|e| format!("No se pudo crear {}: {e}", dir.display()))?;
+            std::fs::create_dir_all(dir).map_err(|e| format!("Could not create {}: {e}", dir.display()))?;
         }
         let text = serde_json::to_string_pretty(self).map_err(|e| e.to_string())?;
         let tmp = path.with_extension("json.tmp");
-        std::fs::write(&tmp, text).map_err(|e| format!("No se pudo guardar: {e}"))?;
-        std::fs::rename(&tmp, &path).map_err(|e| format!("No se pudo guardar: {e}"))
+        std::fs::write(&tmp, text).map_err(|e| format!("Could not save the settings: {e}"))?;
+        std::fs::rename(&tmp, &path).map_err(|e| format!("Could not save the settings: {e}"))
     }
 
     pub fn sanitize(&mut self) {
@@ -223,10 +199,7 @@ impl Config {
         if !self.profiles.iter().any(|p| p.name == base) {
             return base.to_string();
         }
-        (2..)
-            .map(|n| format!("{base} ({n})"))
-            .find(|name| !self.profiles.iter().any(|p| &p.name == name))
-            .unwrap()
+        (2..).map(|n| format!("{base} ({n})")).find(|name| !self.profiles.iter().any(|p| &p.name == name)).unwrap()
     }
 }
 
@@ -266,5 +239,14 @@ mod tests {
         assert!(cfg.profiles[0].dnd);
         assert_eq!(cfg.profiles[0].sidetone_volume, 50);
         assert_eq!(cfg.wait_timeout_ms, 5000);
+        assert_eq!(cfg.headset_model, HeadsetModel::BlackSharkV2Pro2023);
+    }
+
+    #[test]
+    fn old_advanced_settings_are_ignored() {
+        // Configs from 0.2 development builds still carry these fields.
+        let text = r#"{"eq_method":"relatch","release_remote":false,"send_legacy_config":true,"eq_status":0}"#;
+        let cfg: Config = serde_json::from_str(text).unwrap();
+        assert_eq!(cfg, Config::default());
     }
 }

@@ -1,6 +1,13 @@
+# Build output and release files
 /target
-/asar_extracted
-*.pcapng
+/dist/
+
+# The maintainer's own notes and archives; never published
+/local/
+
+# Research captures: they can hold serial numbers and user paths
 *.pcap
-razer_init.py
-ANALYSIS.md
+*.pcapng
+rzr-capture*/
+rzr-capture*.zip
+*.log

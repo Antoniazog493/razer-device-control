@@ -38,8 +38,34 @@ pub fn acquire_watcher() -> bool {
 /// Whether a `rzr --watch` process is running.
 #[cfg(windows)]
 pub fn watcher_running() -> bool {
+    mutex_exists(&mutex_name())
+}
+
+#[cfg(windows)]
+fn panel_mutex_name() -> Vec<u16> {
+    "Local\\rzr_panel\0".encode_utf16().collect()
+}
+
+/// Tell the watcher a panel is open, for the rest of this process: the
+/// panel follows the headset's EQ button then, and the watcher leaves it be.
+#[cfg(windows)]
+pub fn mark_panel_open() {
+    let name = panel_mutex_name();
+    // Leak the handle — lives for process lifetime
+    unsafe {
+        CreateMutexW(std::ptr::null_mut(), 0, name.as_ptr());
+    }
+}
+
+/// Whether a panel (not the demo) is open.
+#[cfg(windows)]
+pub fn panel_open() -> bool {
+    mutex_exists(&panel_mutex_name())
+}
+
+#[cfg(windows)]
+fn mutex_exists(name: &[u16]) -> bool {
     const SYNCHRONIZE: u32 = 0x0010_0000;
-    let name = mutex_name();
     unsafe {
         let handle = OpenMutexW(SYNCHRONIZE, 0, name.as_ptr());
         if handle.is_null() {
@@ -57,6 +83,14 @@ pub fn acquire_watcher() -> bool {
 
 #[cfg(not(windows))]
 pub fn watcher_running() -> bool {
+    false
+}
+
+#[cfg(not(windows))]
+pub fn mark_panel_open() {}
+
+#[cfg(not(windows))]
+pub fn panel_open() -> bool {
     false
 }
 

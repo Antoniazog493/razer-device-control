@@ -1,0 +1,31 @@
+name: Bug report
+description: Something in rzr doesn't work as it should.
+labels: ["bug"]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: rzr version
+      description: Settings › About.
+      placeholder: 0.2.0
+    validations:
+      required: true
+  - type: input
+    id: setup
+    attributes:
+      label: Headset and Windows
+      placeholder: BlackShark V2 Pro (2023), Windows 11 24H2, THX installed, Synapse uninstalled
+    validations:
+      required: true
+  - type: textarea
+    id: log
+    attributes:
+      label: Debug log
+      description: Turn on Settings › Diagnostics › Debug log, repeat the problem, then attach debug.log (Open folder). Look through it first; it has no personal data, but check anyway.

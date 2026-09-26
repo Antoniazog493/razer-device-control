@@ -1,7 +1,7 @@
-/// Windows audio endpoints: listing, volume/mute and default device.
-///
-/// Volume and listing go through Core Audio (MMDevice API) directly. Setting
-/// the default device uses the undocumented IPolicyConfig through PowerShell.
+//! Windows audio endpoints: listing, volume/mute and default device.
+//!
+//! Volume and listing go through Core Audio (MMDevice API) directly. Setting
+//! the default device uses the undocumented IPolicyConfig through PowerShell.
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Flow {
@@ -37,12 +37,7 @@ pub fn headset_endpoint(flow: Flow) -> Option<Endpoint> {
         .find(|d| d.name.to_lowercase().contains("blackshark"))
         .or_else(|| devices.iter().find(|d| d.is_default))?;
     let (volume, muted) = get_volume(&dev.id)?;
-    Some(Endpoint {
-        id: dev.id.clone(),
-        name: dev.name.clone(),
-        volume,
-        muted,
-    })
+    Some(Endpoint { id: dev.id.clone(), name: dev.name.clone(), volume, muted })
 }
 
 #[cfg(windows)]
@@ -53,12 +48,11 @@ mod imp {
     use super::{AudioDevice, Flow};
     use std::os::windows::process::CommandExt;
     use std::process::Command;
-    use windows::core::{HSTRING, Result};
+    use windows::core::{Result, HSTRING};
     use windows::Win32::Devices::FunctionDiscovery::PKEY_Device_FriendlyName;
     use windows::Win32::Media::Audio::Endpoints::IAudioEndpointVolume;
     use windows::Win32::Media::Audio::{
-        eCapture, eConsole, eRender, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator,
-        DEVICE_STATE_ACTIVE,
+        eCapture, eConsole, eRender, IMMDevice, IMMDeviceEnumerator, MMDeviceEnumerator, DEVICE_STATE_ACTIVE,
     };
     use windows::Win32::System::Com::{
         CoCreateInstance, CoInitializeEx, CoTaskMemFree, CLSCTX_ALL, COINIT_MULTITHREADED, STGM_READ,
@@ -109,11 +103,8 @@ mod imp {
         };
         let Ok(en) = enumerator() else { return Vec::new() };
         unsafe {
-            let default_id = en
-                .GetDefaultAudioEndpoint(df, eConsole)
-                .ok()
-                .and_then(|d| device_id(&d))
-                .unwrap_or_default();
+            let default_id =
+                en.GetDefaultAudioEndpoint(df, eConsole).ok().and_then(|d| device_id(&d)).unwrap_or_default();
             let Ok(col) = en.EnumAudioEndpoints(df, DEVICE_STATE_ACTIVE) else { return Vec::new() };
             let count = col.GetCount().unwrap_or(0);
             (0..count)
@@ -121,11 +112,7 @@ mod imp {
                     let dev = col.Item(i).ok()?;
                     let id = device_id(&dev)?;
                     let name = device_name(&dev).unwrap_or_else(|| id.clone());
-                    Some(AudioDevice {
-                        is_default: id == default_id,
-                        name,
-                        id,
-                    })
+                    Some(AudioDevice { is_default: id == default_id, name, id })
                 })
                 .collect()
         }
@@ -148,15 +135,14 @@ mod imp {
     }
 
     pub fn set_mute(id: &str, muted: bool) -> bool {
-        endpoint_volume(id)
-            .and_then(|v| unsafe { v.SetMute(muted, std::ptr::null()) })
-            .is_ok()
+        endpoint_volume(id).and_then(|v| unsafe { v.SetMute(muted, std::ptr::null()) }).is_ok()
     }
 
     /// Set the default audio device (all roles) by endpoint ID.
     pub fn set_default_device(device_id: &str) -> bool {
         // Uses IPolicyConfig COM interface via PowerShell
-        let ps_script = format!(r#"
+        let ps_script = format!(
+            r#"
 Add-Type -TypeDefinition @'
 using System;
 using System.Runtime.InteropServices;
@@ -190,7 +176,9 @@ public class AudioSwitcher {{
 }}
 '@
 [AudioSwitcher]::SetDefault("{id}")
-"#, id = device_id.replace('"', ""));
+"#,
+            id = device_id.replace('"', "")
+        );
 
         Command::new("powershell")
             .args(["-NoProfile", "-Command", &ps_script])
@@ -201,10 +189,7 @@ public class AudioSwitcher {{
     }
 
     fn launch(program: &str, args: &[&str]) {
-        let _ = Command::new(program)
-            .args(args)
-            .creation_flags(CREATE_NO_WINDOW)
-            .spawn();
+        let _ = Command::new(program).args(args).creation_flags(CREATE_NO_WINDOW).spawn();
     }
 
     pub fn open_volume_mixer() {
