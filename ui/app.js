@@ -133,10 +133,11 @@ function renderAudio() {
     m === true ? "SILENCIADO con el botón del headset" : m === false ? "Activo (botón del headset)" : "Estado del botón de silencio desconocido";
 }
 
-/** THX switches only work while its service answers and no change is pending. */
+/** THX switches and levels only work while its service answers and no change is pending. */
 function renderThx() {
   const writable = !!(S.thx && S.thx.writable);
-  for (const el of $$("[data-thx]")) el.setAttribute("aria-disabled", writable ? "false" : "true");
+  for (const el of $$(".toggle[data-thx]")) el.setAttribute("aria-disabled", writable ? "false" : "true");
+  for (const el of $$(".slider[data-thx]")) el.classList.toggle("locked", !writable);
 }
 
 function renderPower() {

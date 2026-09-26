@@ -1,13 +1,19 @@
-//! THX Spatial Audio: reading its state and switching its options.
+//! THX Spatial Audio: reading its state and changing its options.
 //!
 //! THX is an audio effect in Windows, not part of the headset (see
 //! docs/HALLAZGOS.md). Its full state is a JSON string that the THX service
 //! (`VSSrv.exe`) keeps in the headset's output endpoint properties; rzr reads
 //! it from the registry, because the endpoint's property store cuts strings at
-//! 259 characters and the JSON is about 1 KB. Changes go through the service's
-//! COM interface (`IVSSrvTHXSettings`), the same service Synapse talks to,
-//! which then rewrites the JSON. Only the on/off switches that interface
-//! offers are used: THX Spatial Audio, Bass Boost and Voice Clarity (ADR 0004).
+//! 259 characters and the JSON is about 1 KB. Changes go to the service, which
+//! then rewrites the JSON, by two roads (ADR 0005):
+//! - its COM interface (`IVSSrvTHXSettings`) for what it offers: the THX
+//!   Spatial Audio, Bass Boost and Voice Clarity switches (ADR 0004);
+//! - ZeroMQ, as Synapse does, for the rest: Sound Normalization and levels.
+
+#[cfg_attr(not(windows), allow(dead_code))]
+mod proto;
+#[cfg_attr(not(windows), allow(dead_code))]
+mod zmtp;
 
 use serde::Deserialize;
 
@@ -53,6 +59,7 @@ pub fn parse_state(json: &str) -> Result<ThxState, String> {
 pub enum ThxOption {
     Spatial,
     BassBoost,
+    Normalization,
     VoiceClarity,
 }
 
@@ -61,14 +68,16 @@ impl ThxOption {
         match self {
             ThxOption::Spatial => s.spatial_enabled,
             ThxOption::BassBoost => s.bass_boost_enabled,
+            ThxOption::Normalization => s.drc_enabled,
             ThxOption::VoiceClarity => s.dialog_enhancement_enabled,
         }
     }
 
-    pub fn set(self, s: &mut ThxState, on: bool) {
+    fn set(self, s: &mut ThxState, on: bool) {
         match self {
             ThxOption::Spatial => s.spatial_enabled = on,
             ThxOption::BassBoost => s.bass_boost_enabled = on,
+            ThxOption::Normalization => s.drc_enabled = on,
             ThxOption::VoiceClarity => s.dialog_enhancement_enabled = on,
         }
     }
@@ -77,7 +86,164 @@ impl ThxOption {
         match self {
             ThxOption::Spatial => "THX Spatial Audio",
             ThxOption::BassBoost => "Bass Boost",
+            ThxOption::Normalization => "Normalización de sonido",
             ThxOption::VoiceClarity => "Claridad de voz",
+        }
+    }
+}
+
+/// A THX option with a level (0-100), kept while the option is off.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThxLevel {
+    BassBoost,
+    Normalization,
+    VoiceClarity,
+}
+
+impl ThxLevel {
+    fn get(self, s: &ThxState) -> f32 {
+        match self {
+            ThxLevel::BassBoost => s.bass_boost,
+            ThxLevel::Normalization => s.drc_level,
+            ThxLevel::VoiceClarity => s.dialog_enhancement,
+        }
+    }
+
+    fn set(self, s: &mut ThxState, v: f32) {
+        match self {
+            ThxLevel::BassBoost => s.bass_boost = v,
+            ThxLevel::Normalization => s.drc_level = v,
+            ThxLevel::VoiceClarity => s.dialog_enhancement = v,
+        }
+    }
+
+    fn option(self) -> ThxOption {
+        match self {
+            ThxLevel::BassBoost => ThxOption::BassBoost,
+            ThxLevel::Normalization => ThxOption::Normalization,
+            ThxLevel::VoiceClarity => ThxOption::VoiceClarity,
+        }
+    }
+}
+
+/// A change to one THX setting.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ThxChange {
+    Switch(ThxOption, bool),
+    Level(ThxLevel, f32),
+}
+
+impl ThxChange {
+    pub fn apply(self, s: &mut ThxState) {
+        match self {
+            ThxChange::Switch(o, on) => o.set(s, on),
+            ThxChange::Level(l, v) => l.set(s, v),
+        }
+    }
+
+    /// The state already has this value (levels are whole numbers on the page).
+    pub fn shown_in(self, s: &ThxState) -> bool {
+        match self {
+            ThxChange::Switch(o, on) => o.is_on(s) == on,
+            ThxChange::Level(l, v) => (l.get(s) - v).abs() < 0.5,
+        }
+    }
+
+    pub fn label(self) -> String {
+        match self {
+            ThxChange::Switch(o, _) => o.label().to_string(),
+            ThxChange::Level(l, _) => format!("Nivel de {}", l.option().label()),
+        }
+    }
+
+    /// The `thx.sa.State` field this change sets, for the ZeroMQ road.
+    #[cfg_attr(not(windows), allow(dead_code))]
+    fn patch(self) -> proto::Patch {
+        use proto::{state, Patch};
+        match self {
+            ThxChange::Switch(ThxOption::Spatial, on) => Patch::Bool(state::SPATIAL_ENABLED, on),
+            ThxChange::Switch(ThxOption::BassBoost, on) => Patch::Bool(state::BASS_BOOST_ENABLED, on),
+            ThxChange::Switch(ThxOption::Normalization, on) => Patch::Bool(state::DRC_ENABLED, on),
+            ThxChange::Switch(ThxOption::VoiceClarity, on) => Patch::Bool(state::DIALOG_ENHANCEMENT_ENABLED, on),
+            ThxChange::Level(ThxLevel::BassBoost, v) => Patch::Double(state::BASS_BOOST, v.into()),
+            ThxChange::Level(ThxLevel::Normalization, v) => Patch::Double(state::DRC_LEVEL, v.into()),
+            ThxChange::Level(ThxLevel::VoiceClarity, v) => Patch::Double(state::DIALOG_ENHANCEMENT, v.into()),
+        }
+    }
+}
+
+/// Talking to the THX service over ZeroMQ, as Synapse does (ADR 0005).
+#[cfg_attr(not(windows), allow(dead_code))]
+mod zmq {
+    use super::{proto, zmtp};
+    use std::net::{Ipv4Addr, SocketAddr, SocketAddrV4, TcpStream};
+    use std::time::Duration;
+
+    /// Where the service listens when its discovery key can't be read.
+    pub const DEFAULT_ADDRESS: SocketAddr = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 49671));
+    const TIMEOUT: Duration = Duration::from_secs(3);
+
+    /// The address in the service's discovery key (`tcp://127.0.0.1:49671`),
+    /// if it's a local one.
+    pub fn parse_address(url: &str) -> Option<SocketAddr> {
+        let addr: SocketAddr = url.trim().strip_prefix("tcp://")?.parse().ok()?;
+        addr.ip().is_loopback().then_some(addr)
+    }
+
+    /// A registered connection: the service answered `Register` with its state.
+    struct Session {
+        req: zmtp::Req<TcpStream>,
+        /// Synapse sends the address of another socket of its own here; the
+        /// service needs the frame but never connects to it (2026-09-26).
+        address: Vec<u8>,
+        state: Vec<u8>,
+    }
+
+    impl Session {
+        fn open(addr: SocketAddr) -> Result<Self, String> {
+            let io = |e: std::io::Error| format!("no se pudo conectar con el servicio de THX por ZeroMQ: {e}");
+            let stream = TcpStream::connect_timeout(&addr, TIMEOUT).map_err(io)?;
+            stream.set_read_timeout(Some(TIMEOUT)).map_err(io)?;
+            stream.set_write_timeout(Some(TIMEOUT)).map_err(io)?;
+            let address = format!("x-address:tcp://{}", stream.local_addr().map_err(io)?).into_bytes();
+            let req = zmtp::Req::handshake(stream)?;
+            let mut s = Self { req, address, state: Vec::new() };
+            s.state = s.call(&proto::register(std::process::id()))?.state;
+            Ok(s)
+        }
+
+        /// One request: Synapse's four frames (delimiter, x-address,
+        /// x-originator, x-payload). Fails unless the service accepts it.
+        fn call(&mut self, payload: &[u8]) -> Result<proto::Reply, String> {
+            let payload = [&b"x-payload:"[..], payload].concat();
+            let parts = self.req.request(&[&self.address, b"x-originator:rzr", &payload])?;
+            for part in &parts {
+                if let Some(e) = part.strip_prefix(b"x-Exception:") {
+                    return Err(format!("el servicio de THX respondió un error: {}", String::from_utf8_lossy(e)));
+                }
+            }
+            let body = parts
+                .iter()
+                .find_map(|p| p.strip_prefix(b"x-payload:"))
+                .ok_or("el servicio de THX respondió sin datos")?;
+            let reply = proto::parse_reply(body)?;
+            if reply.status != 0 {
+                return Err(format!("el servicio de THX no aceptó el cambio ({}): {}", reply.status, reply.msg));
+            }
+            Ok(reply)
+        }
+    }
+
+    /// Send the service its own state with `patch` applied; Ok once its answer
+    /// shows the new value.
+    pub fn change(addr: SocketAddr, patch: proto::Patch) -> Result<(), String> {
+        let mut s = Session::open(addr)?;
+        let next = proto::next_state(&s.state, &[patch])?;
+        let reply = s.call(&next)?;
+        if proto::shows(&reply.state, patch)? {
+            Ok(())
+        } else {
+            Err("el servicio de THX respondió, pero su estado no muestra el cambio".into())
         }
     }
 }
@@ -98,7 +264,8 @@ pub use imp::*;
 
 #[cfg(windows)]
 mod imp {
-    use super::{parse_state, properties_key, ThxOption, ThxState};
+    use super::{parse_state, properties_key, zmq, ThxChange, ThxOption, ThxState};
+    use std::net::SocketAddr;
     use windows::core::{interface, s, IUnknown, IUnknown_Vtbl, GUID, HRESULT, PCSTR};
     use windows::Win32::System::Com::{CoCreateInstance, CLSCTX_LOCAL_SERVER};
     use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ};
@@ -145,25 +312,51 @@ mod imp {
         Some(parse_state(&json))
     }
 
-    /// A connection to the THX service.
-    pub struct Service(IVSSrvTHXSettings);
+    /// Where the service takes ZeroMQ requests, from its discovery key.
+    fn zmq_address() -> SocketAddr {
+        let url: Option<String> = RegKey::predef(HKEY_LOCAL_MACHINE)
+            .open_subkey_with_flags(r"SOFTWARE\THX\Discovery", KEY_READ)
+            .and_then(|k| k.get_value("thx:sa:service"))
+            .ok();
+        url.as_deref().and_then(zmq::parse_address).unwrap_or(zmq::DEFAULT_ADDRESS)
+    }
+
+    /// The THX service: its COM interface, and where it takes ZeroMQ requests.
+    pub struct Service {
+        com: IVSSrvTHXSettings,
+        zmq: SocketAddr,
+    }
 
     impl Service {
         /// Fails if THX isn't installed or its service can't be reached.
         pub fn connect() -> Result<Self, String> {
-            let settings: IVSSrvTHXSettings =
-                unsafe { CoCreateInstance(&CLSID_THX_SETTINGS, None, CLSCTX_LOCAL_SERVER) }
-                    .map_err(|e| format!("no se pudo conectar con el servicio de THX: {e}"))?;
+            let com: IVSSrvTHXSettings = unsafe { CoCreateInstance(&CLSID_THX_SETTINGS, None, CLSCTX_LOCAL_SERVER) }
+                .map_err(|e| format!("no se pudo conectar con el servicio de THX: {e}"))?;
             // The service keeps settings per user session and finds ours by process ID.
-            unsafe { settings.init(std::process::id()) }
+            unsafe { com.init(std::process::id()) }
                 .ok()
                 .map_err(|e| format!("el servicio de THX rechazó la conexión: {e}"))?;
-            Ok(Self(settings))
+            Ok(Self { com, zmq: zmq_address() })
         }
 
-        /// Switch an option and read it back from the service.
-        pub fn set(&self, option: ThxOption, on: bool) -> Result<bool, String> {
-            let s = &self.0;
+        /// Make a change and check the service took it: the switches COM
+        /// offers go by COM (ADR 0004), the rest by ZeroMQ (ADR 0005).
+        pub fn apply(&self, change: ThxChange) -> Result<(), String> {
+            match change {
+                ThxChange::Switch(option, on) if option != ThxOption::Normalization => {
+                    if self.com_set(option, on)? == on {
+                        Ok(())
+                    } else {
+                        Err("el servicio de THX no aceptó el cambio".into())
+                    }
+                }
+                _ => zmq::change(self.zmq, change.patch()),
+            }
+        }
+
+        /// Switch an option by COM and read it back from the service.
+        fn com_set(&self, option: ThxOption, on: bool) -> Result<bool, String> {
+            let s = &self.com;
             let mut sz = 0u64;
             let mut msg = vec![0u8; INBAND_LEN];
             let (m, p) = (&mut sz as *mut u64, msg.as_mut_ptr());
@@ -173,20 +366,16 @@ mod imp {
                     ThxOption::Spatial => s.set_spatial_processing_state(ORIGINATOR, v, m, p),
                     ThxOption::BassBoost => s.set_bass_boost_state(ORIGINATOR, v, m, p),
                     ThxOption::VoiceClarity => s.set_dialog_enhance_state(ORIGINATOR, v, m, p),
+                    ThxOption::Normalization => return Err("la normalización no va por COM".into()),
                 }
             };
             hr.ok().map_err(|e| format!("el servicio de THX no aplicó el cambio: {e}"))?;
-            self.get(option)
-        }
-
-        fn get(&self, option: ThxOption) -> Result<bool, String> {
-            let s = &self.0;
             let mut v = 0i32;
             let hr = unsafe {
                 match option {
                     ThxOption::Spatial => s.get_spatial_processing_state(&mut v),
                     ThxOption::BassBoost => s.get_bass_boost_state(&mut v),
-                    ThxOption::VoiceClarity => s.get_dialog_enhance_state(&mut v),
+                    _ => s.get_dialog_enhance_state(&mut v),
                 }
             };
             hr.ok().map_err(|e| format!("no se pudo leer el estado de THX: {e}"))?;
@@ -198,7 +387,7 @@ mod imp {
 /// Non-Windows builds (development only): no THX.
 #[cfg(not(windows))]
 mod imp {
-    use super::{ThxOption, ThxState};
+    use super::{ThxChange, ThxState};
 
     pub fn read_state(_endpoint_id: &str) -> Option<Result<ThxState, String>> {
         None
@@ -210,7 +399,7 @@ mod imp {
         pub fn connect() -> Result<Self, String> {
             Err("THX solo existe en Windows".into())
         }
-        pub fn set(&self, _option: ThxOption, _on: bool) -> Result<bool, String> {
+        pub fn apply(&self, _change: ThxChange) -> Result<(), String> {
             Err("THX solo existe en Windows".into())
         }
     }
@@ -263,11 +452,54 @@ mod tests {
     fn options_read_and_write_their_own_field() {
         let mut s = ThxState::default();
         for option in [ThxOption::Spatial, ThxOption::BassBoost, ThxOption::VoiceClarity] {
-            assert!(!option.is_on(&s));
-            option.set(&mut s, true);
-            assert!(option.is_on(&s));
+            let change = ThxChange::Switch(option, true);
+            assert!(!change.shown_in(&s));
+            change.apply(&mut s);
+            assert!(change.shown_in(&s) && option.is_on(&s));
         }
         assert!(s.spatial_enabled && s.bass_boost_enabled && s.dialog_enhancement_enabled && !s.drc_enabled);
+        ThxChange::Switch(ThxOption::Normalization, true).apply(&mut s);
+        assert!(s.drc_enabled);
+    }
+
+    #[test]
+    fn levels_read_and_write_their_own_field() {
+        let mut s = ThxState::default();
+        ThxChange::Level(ThxLevel::BassBoost, 30.0).apply(&mut s);
+        ThxChange::Level(ThxLevel::Normalization, 40.0).apply(&mut s);
+        ThxChange::Level(ThxLevel::VoiceClarity, 50.0).apply(&mut s);
+        assert_eq!((s.bass_boost, s.drc_level, s.dialog_enhancement), (30.0, 40.0, 50.0));
+        assert!(!s.bass_boost_enabled, "a level doesn't switch the option on");
+        // The service stores doubles; the page sends whole numbers.
+        s.bass_boost = 30.2;
+        assert!(ThxChange::Level(ThxLevel::BassBoost, 30.0).shown_in(&s));
+        assert!(!ThxChange::Level(ThxLevel::BassBoost, 31.0).shown_in(&s));
+        assert_eq!(ThxChange::Level(ThxLevel::Normalization, 0.0).label(), "Nivel de Normalización de sonido");
+    }
+
+    #[test]
+    fn changes_patch_the_state_field_they_show() {
+        use proto::{state, Patch};
+        let cases = [
+            (ThxChange::Switch(ThxOption::Normalization, true), Patch::Bool(state::DRC_ENABLED, true)),
+            (ThxChange::Switch(ThxOption::BassBoost, false), Patch::Bool(state::BASS_BOOST_ENABLED, false)),
+            (ThxChange::Level(ThxLevel::BassBoost, 70.0), Patch::Double(state::BASS_BOOST, 70.0)),
+            (ThxChange::Level(ThxLevel::Normalization, 20.0), Patch::Double(state::DRC_LEVEL, 20.0)),
+            (ThxChange::Level(ThxLevel::VoiceClarity, 0.0), Patch::Double(state::DIALOG_ENHANCEMENT, 0.0)),
+        ];
+        for (change, patch) in cases {
+            assert_eq!(change.patch(), patch);
+        }
+    }
+
+    #[test]
+    fn zmq_address_from_the_discovery_key() {
+        assert_eq!(zmq::parse_address("tcp://127.0.0.1:49671"), Some(zmq::DEFAULT_ADDRESS));
+        assert_eq!(zmq::parse_address(" tcp://127.0.0.1:50000 ").map(|a| a.port()), Some(50000));
+        // Only this PC: rzr never sends the THX state anywhere else.
+        assert_eq!(zmq::parse_address("tcp://192.168.1.5:49671"), None);
+        assert_eq!(zmq::parse_address("tcp://*:49671"), None);
+        assert_eq!(zmq::parse_address("127.0.0.1:49671"), None);
     }
 
     #[test]

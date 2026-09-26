@@ -1,6 +1,6 @@
 # 0004. Los ajustes de THX se cambian por la interfaz COM de su servicio
 
-- Estado: Aceptada
+- Estado: Aceptada. Ampliada por [0005](0005-thx-por-zeromq.md): normalización y niveles por ZeroMQ
 - Fecha: 2026-09-26
 - Completa a [0003](0003-thx-por-sus-ajustes.md): elige cómo escribir los ajustes.
 

@@ -15,7 +15,8 @@ Los ADR no se editan después de aceptados. Si la decisión cambia, se escribe u
 | [0001](0001-interfaz-web-webview2.md) | La interfaz es una página web en WebView2 | Aceptada |
 | [0002](0002-secuencias-verificadas.md) | Solo secuencias de Synapse/OpenRazer, con candado y verificación por lectura | Aceptada |
 | [0003](0003-thx-por-sus-ajustes.md) | THX se controla escribiendo sus ajustes, sin redistribuir su driver | Aceptada (el camino lo elige 0004) |
-| [0004](0004-thx-por-com.md) | Los ajustes de THX se cambian por la interfaz COM de su servicio | Aceptada |
+| [0004](0004-thx-por-com.md) | Los ajustes de THX se cambian por la interfaz COM de su servicio | Aceptada (ampliada por 0005) |
+| [0005](0005-thx-por-zeromq.md) | Lo que COM no puede cambiar en THX va por ZeroMQ, con un cliente propio | Aceptada |
 
 ## Plantilla
 

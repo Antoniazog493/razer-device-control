@@ -105,7 +105,7 @@ _Fuente: sesión local en la PC del usuario, 2026-09-26: textos y biblioteca de 
   - Un usuario normal puede crear el objeto y llamarlo (sin administrador). Los `Get…` devolvieron exactamente lo mismo que el JSON.
   - Tras un `Set…` el servicio reescribe `,6` y `,7` y sube `sequenceNumber`: entre 0,3 s y 3 s después. También lo publica en el `PUB` (tema `thx:sa:state`, con `x-originator:` y `x-payload:`).
   - **Probado con Synapse cerrado:** Spatial activado por COM se oyó claramente; desde el panel de rzr se oyó Claridad de voz y Spatial se notó poco con música. Cada cambio del panel quedó confirmado en el JSON en menos de 1 s.
-  - Falta por COM: activar la **normalización** y cambiar los **niveles** (Bass Boost, claridad de voz). `GetParam` responde solo a los parámetros 1–3 (valores 1, 1, 0) entre 0 y 300, sin saber qué son.
+  - COM no puede activar la **normalización** ni cambiar los **niveles** (Bass Boost, claridad de voz): eso va por ZeroMQ. `GetParam` responde solo a los parámetros 1–3 (valores 1, 1, 0) entre 0 y 300, sin saber qué son.
   - El búfer `inbandMessage` que devuelven los `Set…` vuelve vacío (`sz = 0`).
   - **Los cambios se aplican en vivo:** el efecto (`THXOutAPO`) se registra con el servicio (`IVSSrvTHXOutMFXAPO::NotifyAPOInit`), el servicio le avisa con un evento y el efecto pide el estado (`GetSystemState`). No hace falta reiniciar el audio.
 - **Otras interfaces del servicio** (biblioteca de tipos de `VSSrv.exe`, sin probar):
@@ -123,10 +123,16 @@ _Fuente: sesión local en la PC del usuario, 2026-09-26: textos y biblioteca de 
   - Además, otra conexión pide la lista de presets con `thx.sa.PresetService.Request` y recibe `PresetService.Reply`.
   - En el `State`, `eq_curve` son 31 `double` (campo empaquetado).
 - **Repetido desde un script, funciona** (2026-09-26, con Synapse cerrado): con `x-address` apuntando a un socket `PULL` propio, `Register` devuelve el estado. Un `State` igual al actual con la secuencia siguiente y `bass_boost` (campo 13, `double`) en 0 respondió "State successfully changed", el JSON quedó en `bassBoost: 0` y **se oyeron menos graves**; en 100 volvieron. ✅ oído. Es el camino para los niveles y la normalización.
+- **Detalles comprobados después** (2026-09-26, sesión local):
+  - `x-address` es obligatorio, pero el servicio **no se conecta** a esa dirección: responde igual aunque nadie escuche en ese puerto. rzr manda la dirección local de su propia conexión.
+  - Acepta `x-originator:rzr`; no hace falta un UUID.
+  - Las definiciones protobuf vienen dentro de `VSSrv.exe` (paquete `thx.sa`): `StateChangeResult { uint32 status = 1; string msg = 2; State state = 3 }` (`status` 0 = aceptado), `SetPreset { sequence_number = 1; PresetKey key = 3 }` y `PresetKey { name = 1; user = 2; spatial_enabled = 3; output_device = 4; hardware_id = 5 }`. Además de `thx.sa.PresetService`, hay `RoomService` y `EmitterService`.
+  - **Desde rzr** (cliente propio, [ADR 0005](adr/0005-thx-por-zeromq.md)): cada cambio del panel (nivel de Bass Boost, normalización encendida o apagada y su nivel, claridad de voz) queda en el JSON en menos de 1 s. Los niveles de Bass Boost y Claridad de voz se oyen (0 ↔ 100).
+  - **La normalización no se nota con música**, aunque el servicio la guarde: en una prueba a ciegas (normalización apagada, Spatial encendido, normalización encendida) el usuario solo notó el cambio de Spatial. Falta probar con audio de mucho contraste y compararlo con Synapse.
 - **`spatial-config-util.exe` no sirve para los ajustes:** es un programa en Go que genera la configuración del dispositivo (`thx_spatial.conf.json`, filtros y presets en `C:\ProgramData\THX`). Sus opciones (`-usb`, `-hdaudio`, `-output-file`, `-writeout`, `-eq`, `-gameaux`…) no tocan Bass Boost ni los demás.
 - **Registro:** la clave `Properties` del dispositivo hereda permiso de escritura para `Users` (`SetValue`), así que escribir `,6` no requiere administrador. No se probó: el servicio es quien lo mantiene, y escribirlo por fuera podría desincronizarlo.
 - **Leer `,6` por `IPropertyStore` no sirve:** el almacén de propiedades del endpoint devuelve la cadena cortada en 259 caracteres (el JSON mide ~1 KB). rzr lo lee directamente del registro, lo que cualquier usuario puede hacer.
-- **Camino elegido:** la interfaz COM del servicio (ver [ADR 0004](adr/0004-thx-por-com.md)).
+- **Caminos elegidos:** la interfaz COM del servicio para los interruptores que ofrece ([ADR 0004](adr/0004-thx-por-com.md)) y ZeroMQ para la normalización y los niveles ([ADR 0005](adr/0005-thx-por-zeromq.md)).
 
 ### Paquete de driver
 

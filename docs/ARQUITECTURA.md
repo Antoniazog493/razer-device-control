@@ -53,7 +53,9 @@ Cada capa solo conoce a la de abajo. `protocol.rs` no sabe de hilos; `device.rs`
 | `src/config.rs` | Perfiles y ajustes; carga, valida (`sanitize`) y guarda `config.json`. |
 | `src/synapse.rs` | Importa perfiles `.synapse4`. |
 | `src/winaudio.rs` | Volumen, silencio, lista de dispositivos y dispositivo predeterminado de Windows. |
-| `src/thx.rs` | Estado de THX (el JSON del registro de la salida de los audífonos) y sus interruptores por la interfaz COM del servicio de THX ([ADR 0004](adr/0004-thx-por-com.md)). |
+| `src/thx.rs` | Estado de THX (el JSON del registro de la salida de los audífonos) y sus cambios: los interruptores por la interfaz COM del servicio de THX ([ADR 0004](adr/0004-thx-por-com.md)), la normalización y los niveles por ZeroMQ ([ADR 0005](adr/0005-thx-por-zeromq.md)). |
+| `src/thx/zmtp.rs` | Lo mínimo de ZeroMQ para hablar con el servicio de THX: saludo ZMTP 3.1 y tramas de un socket `REQ`. Sin bibliotecas. |
+| `src/thx/proto.rs` | Los mensajes protobuf del servicio de THX (`Register`, `State`, su respuesta). Sin E/S. |
 | `src/connlog.rs` | Registro de caídas del enlace (`conexion.log`). |
 | `src/debuglog.rs` | Registro de depuración opcional (`debug.log`) y la macro `dlog!`. |
 | `src/instance.rs` | Mutex de instancia única del proceso en segundo plano y candado del bus. |
@@ -117,7 +119,7 @@ Pruebas unitarias sin hardware (`cargo test`):
 - **Configuración:** validación de rangos y JSON incompleto.
 - **Importador de Synapse** y **migración del registro**.
 - **Registro de caídas.**
-- **THX:** análisis del estado (con un JSON escrito a mano) y la clave del registro de cada salida.
+- **THX:** análisis del estado (con un JSON escrito a mano) y la clave del registro de cada salida; mensajes protobuf contra una respuesta real del servicio (`src/thx/testdata/`); tramas ZeroMQ contra un servicio simulado.
 - **Comandos de la página** y **archivos servidos.**
 - **Flujo de la prueba guiada.**
 

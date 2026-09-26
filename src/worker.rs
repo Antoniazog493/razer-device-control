@@ -12,7 +12,7 @@ use crate::connlog::ConnLog;
 use crate::device::{self, Device, Options, Status};
 use crate::dlog;
 use crate::protocol::{self, EqPreset, EQ_BANDS};
-use crate::thx::{self, ThxOption, ThxState};
+use crate::thx::{self, ThxChange, ThxState};
 use crate::winaudio::{self, AudioDevice, Endpoint, Flow};
 
 const POLL_CONNECTED: Duration = Duration::from_secs(5);
@@ -602,14 +602,14 @@ const THX_POLL: Duration = Duration::from_secs(2);
 const THX_CONFIRM: Duration = Duration::from_secs(6);
 
 pub enum ThxCmd {
-    Set(ThxOption, bool),
+    Change(ThxChange),
 }
 
 #[derive(Clone, Debug, Default, PartialEq)]
 pub struct ThxStatus {
     /// None: THX isn't installed on the headset's output (or it isn't there).
     pub state: Option<ThxState>,
-    /// The THX service answers, so options can be switched.
+    /// The THX service answers, so settings can be changed.
     pub service: bool,
     pub busy: bool,
 }
@@ -638,7 +638,7 @@ pub fn spawn_thx_worker(demo: bool, notify: Notify) -> (Sender<ThxCmd>, Receiver
         }
         loop {
             match cmd_rx.recv_timeout(THX_POLL) {
-                Ok(ThxCmd::Set(option, on)) => w.set(option, on),
+                Ok(ThxCmd::Change(change)) => w.change(change),
                 Err(RecvTimeoutError::Timeout) => {}
                 Err(RecvTimeoutError::Disconnected) => break,
             }
@@ -708,13 +708,13 @@ impl ThxWorker {
         self.update(ThxStatus { state, service, busy: self.status.busy });
     }
 
-    /// Switch an option, then wait until the service's stored state shows it.
-    fn set(&mut self, option: ThxOption, on: bool) {
-        dlog!("THX: {} → {on}", option.label());
+    /// Make a change, then wait until the service's stored state shows it.
+    fn change(&mut self, change: ThxChange) {
+        dlog!("THX: {change:?}");
         if self.demo {
             let mut status = self.status.clone();
             if let Some(s) = &mut status.state {
-                option.set(s, on);
+                change.apply(s);
             }
             self.update(status);
             return;
@@ -722,16 +722,15 @@ impl ThxWorker {
         let Some(before) = self.status.state.clone() else { return };
         // Show the requested value while waiting; a failure puts back the real one.
         let mut pending = before.clone();
-        option.set(&mut pending, on);
+        change.apply(&mut pending);
         self.update(ThxStatus { state: Some(pending), busy: true, ..self.status.clone() });
 
         let result = match &self.service {
-            Some(service) => service.set(option, on),
+            Some(service) => service.apply(change),
             None => Err("el servicio de THX no responde".to_string()),
         };
         let error = match result {
-            Ok(now) if now == on => self.confirm(option, on, before.sequence_number),
-            Ok(_) => Some("el servicio de THX no aceptó el cambio".to_string()),
+            Ok(()) => self.confirm(change, before.sequence_number),
             Err(e) => {
                 // Reconnect next time: the service may have restarted.
                 self.service = None;
@@ -740,19 +739,19 @@ impl ThxWorker {
         };
         if let Some(e) = error {
             dlog!("THX: {e}");
-            self.message(format!("{}: {e}", option.label()), true);
+            self.message(format!("{}: {e}", change.label()), true);
         }
         self.update(ThxStatus { busy: false, ..self.status.clone() });
         self.poll();
     }
 
     /// Wait for the stored state to show the change. None when it does.
-    fn confirm(&mut self, option: ThxOption, on: bool, seq_before: u64) -> Option<String> {
+    fn confirm(&mut self, change: ThxChange, seq_before: u64) -> Option<String> {
         let deadline = Instant::now() + THX_CONFIRM;
         while Instant::now() < deadline {
             thread::sleep(Duration::from_millis(250));
             if let Some(s) = self.read() {
-                if s.sequence_number > seq_before && option.is_on(&s) == on {
+                if s.sequence_number > seq_before && change.shown_in(&s) {
                     dlog!("THX: confirmado, secuencia {}", s.sequence_number);
                     self.update(ThxStatus { state: Some(s), ..self.status.clone() });
                     return None;

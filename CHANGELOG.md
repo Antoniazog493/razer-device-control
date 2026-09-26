@@ -12,7 +12,7 @@ Cambios que nota quien usa rzr. Formato basado en [Keep a Changelog](https://kee
 - Varios perfiles; importar perfiles de Synapse (`.synapse4`) con el botón o arrastrando el archivo.
 - Registro de caídas del enlace (`conexion.log`) con resumen en ENERGÍA.
 - Prueba guiada del ecualizador y registro de depuración (`debug.log`) en AJUSTES › DIAGNÓSTICO.
-- MEJORAS muestra el estado de THX (Bass Boost, Normalización, Claridad de voz, Spatial, sus niveles y el preset de THX) y permite activar o desactivar Bass Boost, Claridad de voz y THX Spatial Audio sin tener Synapse abierto.
+- MEJORAS muestra el estado de THX (Bass Boost, Normalización, Claridad de voz, Spatial, sus niveles y el preset de THX) y permite cambiarlo todo sin tener Synapse abierto: activar o desactivar Bass Boost, Normalización, Claridad de voz y THX Spatial Audio, y el nivel de Bass Boost, Normalización y Claridad de voz.
 - Script de captura (`tools/capturar-synapse.ps1`) con fases para Synapse, las mejoras de Windows, THX y el servicio de THX (`-Fase thx-servicio`, solo lectura).
 - Documentación del proyecto: estado, arquitectura, hallazgos, reglas y decisiones.
 
@@ -29,7 +29,7 @@ Cambios que nota quien usa rzr. Formato basado en [Keep a Changelog](https://kee
 
 ### Conocido
 - La curva Personalizada se guarda en el headset pero todavía no se oye (en investigación; ver `docs/ESTADO.md`).
-- El sidetone se envía y el headset lo confirma, pero no se oye. El Bass Boost de THX se activa, pero con el nivel en 50 no se nota.
+- El sidetone se envía y el headset lo confirma, pero no se oye.
 
 ## [0.1.0] — 2026-03-16
 

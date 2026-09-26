@@ -150,14 +150,17 @@
       </header>
       <div data-show="thx">
         <ul class="features live">
-          <li><button class="toggle" data-toggle="thx.bass_boost" data-send="thx_bass_boost" data-thx></button>BASS BOOST<span class="level">nivel <span data-text="thx.bass_boost_level"></span></span></li>
-          <li><span class="toggle" data-toggle="thx.normalization" aria-disabled="true"></span>NORMALIZACIÓN DE SONIDO<span class="level">nivel <span data-text="thx.normalization_level"></span></span></li>
-          <li><button class="toggle" data-toggle="thx.voice_clarity" data-send="thx_voice_clarity" data-thx></button>CLARIDAD DE VOZ<span class="level">nivel <span data-text="thx.voice_clarity_level"></span></span></li>
+          <li><button class="toggle" data-toggle="thx.bass_boost" data-send="thx_bass_boost" data-thx></button>BASS BOOST</li>
+          <li class="level-row"><div class="slider" data-slider="thx.bass_boost_level" data-send="thx_bass_boost_level" data-enabled="thx.writable" data-thx data-min="0" data-max="100" data-labels="0,100"></div></li>
+          <li><button class="toggle" data-toggle="thx.normalization" data-send="thx_normalization" data-thx></button>NORMALIZACIÓN DE SONIDO</li>
+          <li class="level-row"><div class="slider" data-slider="thx.normalization_level" data-send="thx_normalization_level" data-enabled="thx.writable" data-thx data-min="0" data-max="100" data-labels="0,100"></div></li>
+          <li><button class="toggle" data-toggle="thx.voice_clarity" data-send="thx_voice_clarity" data-thx></button>CLARIDAD DE VOZ</li>
+          <li class="level-row"><div class="slider" data-slider="thx.voice_clarity_level" data-send="thx_voice_clarity_level" data-enabled="thx.writable" data-thx data-min="0" data-max="100" data-labels="0,100"></div></li>
           <li><button class="toggle" data-toggle="thx.spatial" data-send="thx_spatial" data-thx></button>THX SPATIAL AUDIO</li>
         </ul>
         <p class="dim">Preset de THX: <span data-text="thx.preset"></span></p>
-        <p class="faint">La normalización y los niveles se ven aquí, pero por ahora solo se cambian desde Synapse.</p>
-        <p class="faint" data-show="!thx.writable">No se puede hablar con el servicio de THX (VSSrv): los ajustes se muestran pero no se pueden cambiar.</p>
+        <p class="faint" data-show="thx.service">Cada nivel se envía al soltar el control y se conserva aunque la opción esté apagada.</p>
+        <p class="faint" data-show="!thx.service">No se puede hablar con el servicio de THX (VSSrv): los ajustes se muestran pero no se pueden cambiar.</p>
       </div>
       <div data-show="!thx">
         <p class="dim">No se encontró THX en la salida de los auriculares. Lo instala Razer Synapse; después ya no hace falta tenerlo abierto.</p>

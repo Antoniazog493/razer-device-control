@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 
 use crate::config::{Config, EqMethod, EqMode, Profile};
 use crate::protocol::{self, EqPreset, EQ_BANDS};
-use crate::thx::{self, ThxOption};
+use crate::thx::{self, ThxChange, ThxLevel, ThxOption};
 use crate::winaudio::{self, AudioDevice, Endpoint};
 use crate::worker::{
     self, AudioCmd, AudioState, Change, DevCmd, DevEvent, DeviceInfo, DiagCmd, Notify, Target, ThxCmd, ThxEvent,
@@ -99,8 +99,21 @@ pub enum Msg {
     ThxBassBoost {
         on: bool,
     },
+    ThxNormalization {
+        on: bool,
+    },
     ThxVoiceClarity {
         on: bool,
+    },
+    /// THX levels, 0-100, sent when the slider is released.
+    ThxBassBoostLevel {
+        value: f32,
+    },
+    ThxNormalizationLevel {
+        value: f32,
+    },
+    ThxVoiceClarityLevel {
+        value: f32,
     },
     Autostart {
         on: bool,
@@ -427,9 +440,13 @@ impl App {
                     }
                 }
             }
-            Msg::ThxSpatial { on } => self.set_thx(ThxOption::Spatial, on),
-            Msg::ThxBassBoost { on } => self.set_thx(ThxOption::BassBoost, on),
-            Msg::ThxVoiceClarity { on } => self.set_thx(ThxOption::VoiceClarity, on),
+            Msg::ThxSpatial { on } => self.set_thx(ThxChange::Switch(ThxOption::Spatial, on)),
+            Msg::ThxBassBoost { on } => self.set_thx(ThxChange::Switch(ThxOption::BassBoost, on)),
+            Msg::ThxNormalization { on } => self.set_thx(ThxChange::Switch(ThxOption::Normalization, on)),
+            Msg::ThxVoiceClarity { on } => self.set_thx(ThxChange::Switch(ThxOption::VoiceClarity, on)),
+            Msg::ThxBassBoostLevel { value } => self.set_thx_level(ThxLevel::BassBoost, value),
+            Msg::ThxNormalizationLevel { value } => self.set_thx_level(ThxLevel::Normalization, value),
+            Msg::ThxVoiceClarityLevel { value } => self.set_thx_level(ThxLevel::VoiceClarity, value),
             Msg::Autostart { on } => match registry::set_autostart(on) {
                 Ok(()) => self.autostart = on,
                 Err(e) => self.toast(e, true),
@@ -535,15 +552,21 @@ impl App {
         }
     }
 
-    fn set_thx(&mut self, option: ThxOption, on: bool) {
+    fn set_thx(&mut self, change: ThxChange) {
         let Some(state) = &mut self.thx.state else { return };
-        if !self.thx.service || self.thx.busy || option.is_on(state) == on {
+        if !self.thx.service || self.thx.busy || change.shown_in(state) {
             return;
         }
         // Show it now; the THX thread reports back once the service confirms (or not).
-        option.set(state, on);
+        change.apply(state);
         self.thx.busy = true;
-        let _ = self.thx_tx.send(ThxCmd::Set(option, on));
+        let _ = self.thx_tx.send(ThxCmd::Change(change));
+    }
+
+    fn set_thx_level(&mut self, level: ThxLevel, value: f32) {
+        if value.is_finite() {
+            self.set_thx(ThxChange::Level(level, value.round().clamp(0.0, 100.0)));
+        }
     }
 
     /// Update the local copy of an endpoint so the page doesn't jump back
@@ -643,6 +666,7 @@ impl App {
                 "config_path": Config::path().display().to_string(),
             },
             "thx": self.thx.state.as_ref().map(|s| json!({
+                "service": self.thx.service,
                 "writable": self.thx.service && !self.thx.busy,
                 "busy": self.thx.busy,
                 "preset": thx::preset_label(&s.preset_name),
@@ -706,6 +730,20 @@ mod tests {
         assert!(matches!(parse(r#"{"cmd":"thx_bass_boost","on":false}"#), Msg::ThxBassBoost { on: false }));
         assert!(matches!(parse(r#"{"cmd":"thx_voice_clarity","on":true}"#), Msg::ThxVoiceClarity { on: true }));
         assert!(matches!(parse(r#"{"cmd":"thx_spatial","on":true}"#), Msg::ThxSpatial { on: true }));
+        assert!(matches!(parse(r#"{"cmd":"thx_normalization","on":true}"#), Msg::ThxNormalization { on: true }));
+        // Sliders also send `commit`, which THX levels don't need.
+        assert!(matches!(
+            parse(r#"{"cmd":"thx_bass_boost_level","value":35,"commit":true}"#),
+            Msg::ThxBassBoostLevel { value } if value == 35.0
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"thx_normalization_level","value":0,"commit":true}"#),
+            Msg::ThxNormalizationLevel { value } if value == 0.0
+        ));
+        assert!(matches!(
+            parse(r#"{"cmd":"thx_voice_clarity_level","value":100,"commit":true}"#),
+            Msg::ThxVoiceClarityLevel { value } if value == 100.0
+        ));
         assert!(serde_json::from_str::<Msg>(r#"{"cmd":"format_disk"}"#).is_err());
     }
 }
