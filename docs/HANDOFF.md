@@ -2,7 +2,7 @@
 
 Para una sesión de Claude Code que corre **en la PC del usuario**, con Windows, el dongle conectado y THX instalado. Complementa a [ESTADO.md](ESTADO.md), que sigue siendo la fuente de verdad. Este archivo explica qué cambia al trabajar en local y por dónde seguir.
 
-Última actualización: 2026-09-26 · rama `UI-creation`.
+Última actualización: 2026-09-26 (segunda sesión) · rama `UI-creation`.
 
 ## Por qué en local
 
@@ -71,24 +71,36 @@ El detalle y las fuentes están en [HALLAZGOS.md › THX](HALLAZGOS.md#thx-spati
 
 ## Qué sigue, en orden
 
-El orden completo está en [ESTADO.md › Sigue](ESTADO.md#sigue-en-orden). Hecho el 2026-09-26:
+El orden completo está en [ESTADO.md › Sigue](ESTADO.md#sigue-en-orden).
+
+Hecho el 2026-09-26, primera sesión:
 
 - Interruptores de THX por COM y panel revisado en Windows.
 - Sondeo completo de Synapse: sonido, THX y micrófono (HALLAZGOS).
-- Verificados de oído desde scripts, **todavía no están en rzr**: el EQ de THX por COM y los niveles de THX por ZeroMQ.
 
-**La próxima sesión aplica todo esto en rzr** (pasos 1 a 4 de ESTADO), para imitar a Synapse. Propuesta pendiente de confirmar con el usuario: implementar el cliente ZeroMQ a mano (saludo ZMTP 3.1 `NULL`, `REQ`, tramas y el protobuf mínimo; ~150 líneas sin dependencias nuevas) en lugar de una biblioteca, para que rzr siga siendo liviano. Registrarlo en un ADR que actualice el 0004.
+Hecho el 2026-09-26, segunda sesión (pasos 1 a 4, todos oídos por el usuario con Synapse cerrado):
+
+1. Niveles y normalización de THX por ZeroMQ, con un cliente propio ([ADR 0005](adr/0005-thx-por-zeromq.md)). La normalización se guarda, pero con música no se nota.
+2. EQ como Synapse: el preset del headset elige también el preset y la curva de THX ([ADR 0006](adr/0006-eq-como-synapse.md)).
+3. El sidetone del headset se oye con Synapse cerrado. No hizo falta el de THX.
+4. Mejoras del micrófono por THX, guardadas en el perfil ([ADR 0007](adr/0007-microfono-en-el-perfil.md)).
+
+**La próxima sesión:**
+
+- Las pruebas de "Esperando al usuario" en ESTADO: mejoras del micrófono tras reiniciar, normalización con audio de mucho contraste y botón EQ del headset con rzr abierto.
+- Después, el paso 5: separar THX de Synapse.
 
 Notas para los próximos pasos:
 
-- **EQ por THX:** `SetCurrentModeEQGains` recibe 31 `float` (un 0 y cada banda 3 veces), el mismo formato que `eqCurve`. Cambia la curva del preset de THX activo. Antes de probar, anota la curva actual para restaurarla.
-- **Sidetone:** probar `IVSSrvSettings` (ver HALLAZGOS) solo con permiso y con el usuario escuchando.
-- **Niveles y normalización por ZeroMQ:** capturado y verificado de oído con un script (2026-09-26). El formato exacto está en HALLAZGOS; la clave es enviar las cuatro partes de Synapse, incluida `x-address:` (sin ella el servicio no responde). Para capturar de nuevo: `tshark -i \Device\NPF_Loopback -f "tcp port 49671 or tcp port 49670"` (Wireshark y Npcap ya están instalados; no requiere administrador).
-- **Micrófono:** va por COM a `IVSSrvSettings`; las parejas de `GetMicParams` ya están identificadas (HALLAZGOS › Micrófono). Para sondear sin depender de los logs de Synapse sirve leer `IVSSrvSettings` cada 300 ms y anotar los cambios.
-- **Sondear a Synapse:** los logs útiles están en `%LOCALAPPDATA%\Razer\RazerAppEngine\User Data\Logs` (`products_1365_mw*.log` para el headset, `ThxV3NativeSubProcess.log` para THX). Synapse los escribe por tandas: usa la hora que trae cada línea, no la hora en que aparece.
-- **Separar THX de Synapse:** cuando ya no haga falta sondear a Synapse. Respaldar primero los instaladores de THX de `C:\ProgramData\Package Cache` fuera del repo; desinstalar Synapse lo hace el usuario.
-- **¿THX suena con `VSSrv` detenido?** Requiere PowerShell como administrador y permiso. Vuelve a iniciarlo al terminar.
+- **Separar THX de Synapse:** respaldar primero los instaladores de THX de `C:\ProgramData\Package Cache`, fuera del repo. Desinstalar Synapse lo hace el usuario. Luego reinstalar solo THX y comprobar que el efecto, `VSSrv` y rzr siguen funcionando (salida, EQ y micrófono).
+- **Estado de THX en vivo:** para seguir los cambios, lee el JSON `,6` cada 200 ms (salida) y `IVSSrvSettings` cada 300 ms (micrófono), y anota solo lo que cambia. Así se ve si cada cambio del panel llega al servicio sin preguntarle al usuario.
+- **Pruebas de oído con el micrófono:** el sidetone del headset no pasa por las mejoras de THX. Para oírlas, el usuario debe escuchar el micrófono en vivo ("Escuchar este dispositivo" de Windows u otra app).
+- **Tamaños de los arreglos COM:** están en la biblioteca de tipos de `VSSrv.exe` (`LoadTypeLibEx` → `ARRAYDESC`, `cElements` en el desplazamiento 20 en 64 bits). Por ejemplo, `float[31]` para el EQ de salida y `float[10]` para el del micrófono.
 - **Probar la interfaz COM desde un script:** en C# (`Add-Type`) hay que declarar los arreglos con `[MarshalAs(UnmanagedType.LPArray)]`; si no, se pasan como `SAFEARRAY` y el proceso se cae por corrupción de memoria.
+- **Heredocs largos en el Bash de esta PC:** a veces se cortan ("unexpected EOF"). Es más seguro escribir el script en un archivo de la carpeta temporal y ejecutarlo.
+- **Sondear a Synapse:** los logs útiles están en `%LOCALAPPDATA%\Razer\RazerAppEngine\User Data\Logs` (`products_1365_mw*.log` para el headset, `ThxV3NativeSubProcess.log` para THX). Synapse los escribe por tandas: usa la hora que trae cada línea, no la hora en que aparece.
+- **ZeroMQ:** para capturar de nuevo, `tshark -i \Device\NPF_Loopback -f "tcp port 49671 or tcp port 49670"` (Wireshark y Npcap ya están instalados; no requiere administrador).
+- **¿THX suena con `VSSrv` detenido?** Requiere PowerShell como administrador y permiso. Vuelve a iniciarlo al terminar.
 
 ## Al terminar la sesión
 

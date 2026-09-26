@@ -65,7 +65,8 @@ Leyenda de verificación:
 
 1. **Mejoras del micrófono tras reiniciar:** con "Iniciar con Windows" activado y alguna mejora encendida en el perfil (por ejemplo la reducción de ruido), reiniciar la PC **sin abrir el panel ni Synapse** y escucharse en vivo: la mejora debería seguir activa. Si no, abrir el panel y comprobar que vuelve (eso confirmaría que THX las olvida y que falla el proceso en segundo plano).
 2. **Normalización de THX con un audio de mucho contraste:** un video o una película con partes muy bajas (susurros) y muy fuertes (explosiones). En MEJORAS, con la normalización al 100, apagarla y encenderla: con ella encendida, lo bajo debería sonar más fuerte y lo fuerte, más suave. Si no se nota, probar lo mismo desde Synapse para saber si es cosa de rzr.
-3. **Ronda 2 de la prueba guiada** (AJUSTES › DIAGNÓSTICO) y enviar `debug.log`. Ya no es urgente: el EQ que se oye va por THX (ver "Sigue" 1). Sirve para saber si la curva del headset puede funcionar sin THX.
+3. **Botón EQ del headset con rzr abierto:** pulsarlo con música sonando. El panel debe mostrar el preset nuevo y MEJORAS › Preset de THX debe cambiar con él (Juego → `Game Mode`, etc.), y la curva debe oírse.
+4. **Ronda 2 de la prueba guiada** (AJUSTES › DIAGNÓSTICO) y enviar `debug.log`. Ya no es urgente: el EQ que se oye va por THX (ver "Sigue" 1). Sirve para saber si la curva del headset puede funcionar sin THX.
 
 ## Sigue (en orden)
 
